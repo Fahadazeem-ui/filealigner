@@ -32,7 +32,7 @@ class Base(unittest.TestCase):
 
     def cats(self, **kw):
         res = core.scan(str(self.root), **kw)
-        return {os.path.relpath(i.source, self.root): i.category for i in res.items}, res
+        return {Path(os.path.relpath(i.source, self.root)).as_posix(): i.category for i in res.items}, res
 
 
 class TestTheOriginalProblem(Base):
