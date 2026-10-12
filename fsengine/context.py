@@ -7,7 +7,8 @@ nothing and a deep pass happens only when the cheap one was not enough.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+import weakref
+from dataclasses import dataclass
 
 from . import probes
 from .magic import Sniff, sniff_file
@@ -44,7 +45,11 @@ class Ctx:
         self.is_dir = is_dir
         self._sn = sn
         self.budget = budget or Budget()
-        self.parent = parent
+        # a *weak* parent link on purpose: a strong one would close the cycle
+        # parent._nested -> child -> parent, and a reference cycle is only broken by the garbage
+        # collector - which on Windows means the archive stays open long enough to make the later
+        # move fail with WinError 32.
+        self.parent_ref = weakref.ref(parent) if parent is not None else None
         self.depth = depth
         self.label_prefix = label_prefix            # e.g. "inside modpack.zip: "
         self._structure: Structure | None = None
@@ -65,6 +70,10 @@ class Ctx:
             self.ext = ext
         self.name_ext = ("." + tail) if dot and len(tail) <= 5 else ext   # what the name claims
         self.notes: list[str] = []
+
+    @property
+    def parent(self) -> "Ctx | None":
+        return self.parent_ref() if self.parent_ref is not None else None
 
     # ------------------------------------------------------------------ identity helpers
     @property
@@ -142,7 +151,9 @@ class Ctx:
         never closed turns into "PermissionError [WinError 32]" the moment the sorter moves the
         file.  Everything that opens a container must close it - this is that one place.
         """
-        for sub in list(self.__dict__.get("_nested") or []):
+        children = list(self.__dict__.get("_nested") or [])
+        self.__dict__["_nested"] = []          # drop the references as well (no cycle left behind)
+        for sub in children:
             sub.close()
         lst = self.lst
         if lst is not None:

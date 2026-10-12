@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import re
 
-from .. import probes
 from ..evidence import W, Board
+
 
 SW = ("Software",)
 
@@ -95,7 +95,7 @@ def _detect_pe(ctx, board: Board) -> None:
     installer_marker = info.marker("NSIS installer", "Inno Setup installer", "InstallShield installer", "WiX/MSI installer")
     if installer_marker or _installerish(ctx.name) or info.has("setup", "installer", "uninstall", "install "):
         why = " + ".join(filter(None, ["installer markers in the binary" if installer_marker else "",
-                                       f"name says installer" if _installerish(ctx.name) else "",
+                                       "name says installer" if _installerish(ctx.name) else "",
                                        f"version info: {info.product}" if info.product else ""]))
         board.add(SW + ("Installers",), 2.6 if installer_marker else 1.8, why, "pe",
                   f"Installer{product}{company}")

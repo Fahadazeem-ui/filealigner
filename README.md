@@ -105,4 +105,15 @@ Add your own wrongly-sorted files as cases there; the benchmark tells you the mo
 {"online_lookup": true, "providers": ["modrinth", "maven"], "timeout": 4}
 ```
 
+## Robustness notes
+
+* **Handles are closed, always.** Archives are opened in memory and closed the moment the item has been
+  identified - never left to the garbage collector. On Windows a file with an open handle cannot be renamed,
+  so a leaked handle shows up as `PermissionError [WinError 32]` when the sorter tries to move it.
+  `test_sorter.py` guards this with `/proc`-based leak checks and with a shutil.move that behaves like Windows.
+* **Transient locks are retried.** Antivirus or Explorer holding a file for a moment no longer fails the item:
+  the move is retried (4 attempts, 0.3s..1.2s backoff). A permanent lock is reported, and the file stays put.
+* **Every scan is bounded**: read budget per item, depth-limited nested archives, entry caps - a zip bomb or a
+  20 GB tar cannot stall or crash a scan.
+
 Safety: preview first, undo journal, collisions never overwrite, refuses drive roots / home / system folders.

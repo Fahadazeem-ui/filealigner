@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .evidence import W, Board
+from .evidence import Board
 from .model import Verdict
 
 IMG = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".raw", ".cr2", ".nef", ".arw", ".dng")
@@ -69,23 +69,6 @@ def verdict_for(kind: str, name: str) -> Verdict | None:
     }
     t = table.get(kind)
     return Verdict(t[0], t[1], t[2], [f"zip content marks it as {kind}"]) if t else None
-
-
-def composition(lst, ext: str) -> Verdict:
-    n = len(lst.names)
-    if n == 0:
-        return Verdict(("Archives",), "Empty archive", 0.8, ["no files inside"])
-    fam = Counter()
-    for nm in lst.names:
-        l = nm.lower()
-        fam["Images & Photos" if l.endswith(IMG) else "Videos" if l.endswith(VID) else "Audio" if l.endswith(AUD) else
-            "Documents" if l.endswith(DOC) else "Source & Code" if l.endswith(CODE) else "Programs & Installers" if l.endswith(PROG)
-            else "Other"] += 1
-    top, cnt = fam.most_common(1)[0]
-    summary = ", ".join(f"{c} {k}" for k, c in fam.most_common(3))
-    if top != "Other" and cnt >= 0.7 * n and n >= 2:
-        return Verdict(("Archives", top), f"Archive of {top.lower()}", 0.85, [f"{n} files inside: {summary}"])
-    return Verdict(("Archives",), "Archive", 0.82, [f"{n} files inside: {summary}"])
 
 
 # --------------------------------------------------------------------------- evidence version

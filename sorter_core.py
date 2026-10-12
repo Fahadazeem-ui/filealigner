@@ -14,6 +14,10 @@ from fsengine import ENGINE_VERSION, Engine
 from fsengine.model import Verdict
 from fsengine.rules import HOME_DIR, RESPECT_SUBFOLDERS, TOP_LEVEL_DOMAINS, taxonomy_names
 
+# how long to wait before retrying a move that hit a transient Windows lock (tests shorten it)
+MOVE_RETRY_DELAY = 0.3
+MOVE_RETRY_ATTEMPTS = 4
+
 UNDO_DIR = Path(HOME_DIR) / "undo"
 CACHE_PATH = Path(HOME_DIR) / "cache.json"
 
@@ -191,7 +195,6 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         except OSError as exc:
             res.skipped.append((cur, f"cannot read folder: {exc.strerror}"))
             continue
-        names = [e.name for e in entries]
         for e in entries:
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
@@ -298,6 +301,29 @@ def _unique(path: str) -> str:
     return f"{base} ({i}){ext}"
 
 
+def _move(src: str, dst: str, attempts: int | None = None):
+    """Move an item, tolerating a *transient* Windows lock.
+
+    On Windows another process (antivirus, Explorer's thumbnail handler, a preview pane) may hold
+    a file open for a moment after we read it.  That surfaces as PermissionError [WinError 32] and
+    usually disappears within a second, so retry briefly instead of failing the item.
+    """
+    last: Exception | None = None
+    attempts = MOVE_RETRY_ATTEMPTS if attempts is None else attempts
+    for i in range(max(1, attempts)):
+        try:
+            shutil.move(src, dst)
+            return
+        except PermissionError as exc:            # in use by another process - worth a retry
+            last = exc
+            if os.path.exists(src) is False:      # something else moved it away meanwhile
+                break
+            time.sleep(MOVE_RETRY_DELAY * (i + 1))
+        except FileNotFoundError as exc:
+            raise exc
+    raise last if last else OSError(f"could not move {src}")
+
+
 def _mkdirs_tracked(path: str, created: list[str]):
     missing = []
     p = path
@@ -325,7 +351,7 @@ def execute(res: ScanResult, remove_empty: bool = True, progress=None) -> Execut
                 raise OSError("source no longer exists")
             _mkdirs_tracked(tdir, created)
             dst = _unique(os.path.join(tdir, it.name))
-            shutil.move(it.source, dst)
+            _move(it.source, dst)
             out.moved.append((it.source, dst))
             parents.add(os.path.dirname(it.source))
         except (OSError, shutil.Error) as exc:
@@ -379,7 +405,7 @@ def undo(journal: str | None = None) -> tuple[int, list[tuple[str, str]]]:
             if os.path.exists(src):
                 raise OSError("original location is occupied now")
             os.makedirs(os.path.dirname(src), exist_ok=True)
-            shutil.move(dst, src)
+            _move(dst, src)
             restored += 1
         except (OSError, shutil.Error) as exc:
             failed.append((dst, str(exc)))

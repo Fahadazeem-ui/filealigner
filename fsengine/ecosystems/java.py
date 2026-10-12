@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .. import probes
-from ..evidence import W, Board
+from ..evidence import Board
 
 _VERSIONED = re.compile(r"^[A-Za-z][\w.\-]*-(\d+\.)+\d+([.\-][\w.\-]*)?\.jar$")
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 
-from .model import Verdict
 
 HOME_DIR = os.path.join(os.path.expanduser("~"), ".file_sorter")
 CORR_PATH = os.path.join(HOME_DIR, "corrections.json")

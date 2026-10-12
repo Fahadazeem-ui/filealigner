@@ -14,11 +14,10 @@ import re
 from . import containers, documents, media
 from .context import Budget, Ctx, open_container
 from .ecosystems import DEEP_DETECTORS, FAST_DETECTORS
-from .evidence import W, Board
+from .evidence import Board
 from .learn import Corrections
 from .listing import DirListing
 from .lookup import Lookup
-from .magic import sniff_file
 from .model import Verdict, review
 from .rules import AMBIGUOUS_EXT, EXT_MAP, FAMILY_ROOT, NAME_SIGNALS, UserRules
 

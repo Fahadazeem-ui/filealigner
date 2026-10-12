@@ -499,9 +499,50 @@ class TestCorpusRoundTrip(Base):
 class TestFileHandles(Base):
     """Windows refuses to rename/move a file that still has an open handle (WinError 32).
 
-    That is not testable on Linux directly, so we record every ZipFile the engine opens and make
-    shutil.move behave like Windows: if anything is still open, the move fails.
+    Linux happily moves open files, so a leaked handle is invisible here - these tests emulate the
+    Windows rule.  `_open_files()` reads /proc and finds every file this process still holds open
+    (any leak: zip, tar, media, pdf ...), and `_strict_move()` makes shutil.move behave like
+    Windows.
     """
+
+    def setUp(self):
+        super().setUp()
+        core.MOVE_RETRY_DELAY = 0.01        # keep the retry tests fast
+        self.addCleanup(setattr, core, "MOVE_RETRY_DELAY", 0.3)
+
+    def _open_files(self) -> set[str]:
+        out = set()
+        try:
+            fds = os.listdir("/proc/self/fd")
+        except OSError:
+            return out
+        for fd in fds:
+            try:
+                target = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                continue
+            if target.startswith("/"):
+                out.add(os.path.abspath(target))
+        return out
+
+    def _assert_nothing_open_below(self, root: str):
+        root = os.path.abspath(root) + os.sep
+        leaked = sorted(p for p in self._open_files() if p.startswith(root))
+        self.assertEqual(leaked, [], f"files still open after the scan: {leaked}")
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux) to inspect open files")
+    def test_scan_leaves_no_open_handles_at_all(self):
+        import gc
+        gc.disable()      # refcounting must be enough: no reference cycle may hold a handle open
+        try:
+            fx.build(self.root)
+            core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+            res = core.scan(str(self.root))          # and after a full sort too
+            core.execute(res)
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
 
     def _record_zip_openings(self):
         import fsengine.listing as listing
@@ -515,10 +556,10 @@ class TestFileHandles(Base):
 
         listing.zipfile.ZipFile = Recorder
         self.addCleanup(setattr, listing.zipfile, "ZipFile", real)
-        return opened, real
+        return opened
 
     def test_every_archive_opened_is_closed_again(self):
-        opened, _ = self._record_zip_openings()
+        opened = self._record_zip_openings()
         self.put("mod.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
         self.put("lib.jar", fx.lib_jar("org.x", "x", "1.0"))
         self.put("pack.zip", fx.zipbytes({"pack.mcmeta": '{"pack":{"pack_format":15}}',
@@ -529,14 +570,29 @@ class TestFileHandles(Base):
         leaks = [z.filename for z in opened if z.fp is not None]
         self.assertEqual(leaks, [], f"archives left open: {leaks}")
 
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
+    def test_nested_archives_do_not_keep_their_outer_archive_open(self):
+        """zip-in-zip / modpack-in-zip: the context graph must not end up in a cycle."""
+        import gc
+        self.put("modpack.zip", fx.zipbytes({
+            "mods/sodium.jar": fx.zipbytes({"fabric.mod.json": '{"id": "sodium"}'}),
+            "mods/jei.jar": fx.zipbytes({"META-INF/mods.toml": 'modId="jei"\n'}),
+            "config/x.toml": "a=1", "options.txt": "version:1.20.1"}))
+        gc.disable()
+        try:
+            res = core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
+        self.assertEqual(res.items[0].category, "Games/Minecraft/Modpacks")
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
     def test_sorting_survives_an_os_that_forbids_moving_open_files(self):
-        opened, _ = self._record_zip_openings()
         real_move = core.shutil.move
 
         def strict_move(src, dst):
-            if isinstance(src, str) and src.lower().endswith((".zip", ".jar", ".mcpack", ".mrpack")):
-                if any(z.fp is not None for z in opened):
-                    raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
+            if os.path.exists(src) and os.path.abspath(src) in self._open_files():
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
             return real_move(src, dst)
 
         core.shutil.move = strict_move
@@ -548,15 +604,71 @@ class TestFileHandles(Base):
         self.assertEqual(out.failed, [])
         self.assertGreater(len([1 for a, _ in out.moved if a.lower().endswith((".zip", ".jar"))]), 5)
 
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
+    def test_sorting_after_a_deep_corpus_scan_leaves_handles_closed(self):
+        """The whole labelled corpus: open nothing, so every item can be moved on Windows."""
+        import gc
+        import bench.corpus as corpus
+        for case in corpus.CASES:
+            corpus.build_case(case, str(self.root))
+        gc.disable()                 # 4 corpus items are archives inside archives
+        try:
+            res = core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: (_ for _ in ()).throw(PermissionError(32, "in use", src)) \
+            if os.path.abspath(src) in self._open_files() else real_move(src, dst)
+        try:
+            out = core.execute(res)
+        finally:
+            core.shutil.move = real_move
+        self.assertEqual(out.failed, [])
+        self.assertGreater(len(out.moved), 110)
+
+    def test_a_transient_windows_lock_does_not_fail_the_sort(self):
+        """Antivirus / Explorer can hold a file for a moment: retry instead of reporting an error."""
+        real_move = core.shutil.move
+        state = {"calls": 0, "target": ""}
+
+        def flaky_move(src, dst):
+            if os.path.basename(src) == state["target"] and state["calls"] < 2:
+                state["calls"] += 1
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
+            return real_move(src, dst)
+
+        core.shutil.move = flaky_move
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        state["target"] = "mod.zip"
+        self.put("mod.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        self.put("photo.jpg", fx.jpeg_plain(100, 100))
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertEqual(state["calls"], 2, "the lock was never simulated")
+        self.assertEqual(out.failed, [])
+        self.assertEqual(len(out.moved), 2)
+
+    def test_a_permanent_lock_is_reported_not_hidden(self):
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: (_ for _ in ()).throw(
+            PermissionError(32, "The process cannot access the file because it is being used by another process", src))
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        self.put("locked.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertEqual(len(out.failed), 1)
+        self.assertIn("being used by another process", out.failed[0][1])
+        self.assertTrue((self.root / "locked.zip").exists(), "a failed move must leave the file alone")
+
     def test_unit_folders_do_not_hold_their_contents_open(self):
         """A folder unit is read while listing it; the handle must be gone before it moves."""
-        import fsengine.listing as listing
         self.put("MyPack/pack.mcmeta", '{"pack":{"pack_format":9}}')
         self.put("MyPack/data/ns/functions/f.mcfunction", "say hi")
         self.put("MyPack/readme.txt", "hello")
-        opened, _ = self._record_zip_openings()
+        opened = self._record_zip_openings()
         real_move = core.shutil.move
-        core.shutil.move = lambda src, dst: real_move(src, dst) if not opened or all(z.fp is None for z in opened) \
+        core.shutil.move = lambda src, dst: real_move(src, dst) if all(z.fp is None for z in opened) \
             else (_ for _ in ()).throw(PermissionError(32, "in use", src))
         self.addCleanup(setattr, core.shutil, "move", real_move)
         res = core.scan(str(self.root))
