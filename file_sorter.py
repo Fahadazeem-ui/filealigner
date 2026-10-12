@@ -245,9 +245,11 @@ def gui():
         if iid.startswith("i:") and its:
             it = its[0]
             v = it.verdict
+            alt = ("\n\nAlso considered:\n" + "\n".join(f" \u2022 {'/'.join(d)} (score {s:.1f})" for d, s in v.alternatives)
+                   if v.alternatives else "")
             set_detail(f"{it.source}\n\u2192 {os.path.join(state['res'].dest_root, *v.dest)}\n\n{v.label}   [{v.level}, {v.confidence:.0%}]"
                        + ("   (whole folder moves as ONE unit)" if it.is_dir else "")
-                       + "\n\nWhy:\n" + "\n".join(f" \u2022 {e}" for e in v.evidence))
+                       + "\n\nWhy:\n" + "\n".join(f" \u2022 {e}" for e in v.evidence) + alt)
         elif its:
             set_detail(f"{base.get(iid, '')}: {len(its)} item(s), {core.human(sum(i.size for i in its))}")
 
