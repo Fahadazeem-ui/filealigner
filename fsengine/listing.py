@@ -1,6 +1,12 @@
 """One interface over zip / tar / plain folders, so identification rules are written ONCE
 and work the same on `mod.jar`, `mod.tar.gz` and an already-unzipped `mod/` folder.
-Nothing is ever extracted to disk: we read the table of contents and a few small files in RAM."""
+Nothing is ever extracted to disk: we read the table of contents and a few small files in RAM.
+
+Performance notes (FileSorter 3.1):
+- Name lists are hard-capped (see fsengine.perf) so a 100k-entry archive cannot explode RAM.
+- Tar is only opened when the whole file is under a safe size.
+- Zip central-directory reads stay streaming; we never load the whole archive.
+"""
 from __future__ import annotations
 
 import json
@@ -10,7 +16,8 @@ import re
 import tarfile
 import zipfile
 
-MAX_NAMES = 60000
+from .perf import MAX_DIR_ENTRIES, MAX_TAR_NAMES, MAX_ZIP_NAMES, max_names_for
+
 # a lone top folder with one of these names is meaningful content, not a wrapper to strip
 KEEP_ROOTS = {"meta-inf", "shaders", "assets", "data", "src", "word", "xl", "ppt", "payload", "lib", "libs", "bin", "mods",
               "plugins", "config", "region", "db", "classes", "docs", "visio", "3d", "customxml", "docprops", "_rels"}
@@ -93,9 +100,10 @@ class Listing:
 
 
 class ZipListing(Listing):
-    def __init__(self, path: str):
+    def __init__(self, path: str, max_names: int | None = None):
         self._zf = zipfile.ZipFile(path)
-        infos = self._zf.infolist()[:MAX_NAMES]
+        limit = max_names if max_names is not None else MAX_ZIP_NAMES
+        infos = self._zf.infolist()[:limit]
         self._sizes = {i.filename: i.file_size for i in infos}
         super().__init__([i.filename for i in infos if not i.is_dir()])
 
@@ -117,11 +125,12 @@ class ZipListing(Listing):
 
 
 class TarListing(Listing):
-    def __init__(self, path: str):
+    def __init__(self, path: str, max_names: int | None = None):
         self._tf = tarfile.open(path, "r:*")
+        limit = max_names if max_names is not None else MAX_TAR_NAMES
         names = []
         for i, m in enumerate(self._tf):
-            if i >= MAX_NAMES // 3:
+            if i >= limit:
                 break
             if m.isfile():
                 names.append(m.name)
@@ -144,7 +153,7 @@ class TarListing(Listing):
 class DirListing(Listing):
     """A real folder, walked shallowly (bounded) without touching its contents."""
 
-    def __init__(self, root: str, max_depth: int = 5, max_entries: int = 6000):
+    def __init__(self, root: str, max_depth: int = 5, max_entries: int = MAX_DIR_ENTRIES):
         self.root = root
         names: list[str] = []
         extra: set[str] = set()
@@ -181,14 +190,18 @@ class DirListing(Listing):
             return None
 
 
-def open_listing(path: str, kind: str | None) -> Listing | None:
+def open_listing(path: str, kind: str | None, size: int | None = None) -> Listing | None:
+    """Open a listing with size-aware name caps. Never extracts to disk."""
     try:
+        limit = max_names_for(size) if size is not None else MAX_ZIP_NAMES
         if kind in ("zip", None) and zipfile.is_zipfile(path):
-            return ZipListing(path)
+            return ZipListing(path, max_names=limit)
         if kind in ("tar", "gz", "bz2", "xz") or path.lower().endswith((".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")):
-            if os.path.getsize(path) <= 400 * 1024 * 1024:
-                return TarListing(path)
-    except Exception:
+            # Tar is fully sequential; refuse anything that could blow RAM
+            fsize = size if size is not None else os.path.getsize(path)
+            if fsize <= 400 * 1024 * 1024:
+                return TarListing(path, max_names=min(limit, MAX_TAR_NAMES))
+    except (OSError, MemoryError, zipfile.BadZipFile, tarfile.TarError):
         return None
     return None
 
