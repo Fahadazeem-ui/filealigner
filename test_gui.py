@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 import fixtures_builder as fx  # noqa: E402
 import fsengine.learn as learn  # noqa: E402
+import fsengine.lookup as lookup  # noqa: E402
 import sorter_core as core  # noqa: E402
 
 WIDGETS: list = []          # every widget created, in order
@@ -294,6 +295,7 @@ class TestGuiSmoke(unittest.TestCase):
         core.UNDO_DIR = t / "undo"
         core.CACHE_PATH = t / "cache.json"
         learn.CORR_PATH = str(t / "corrections.json")
+        lookup.CONFIG_PATH = str(t / "no-config.json")
         self._saved = {k: sys.modules.get(k) for k in
                        ("tkinter", "tkinter.ttk", "tkinter.filedialog", "tkinter.messagebox", "file_sorter")}
         sys.modules.update(_make_tkinter_modules())

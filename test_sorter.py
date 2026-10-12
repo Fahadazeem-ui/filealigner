@@ -8,6 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixtures_builder as fx
+import fsengine.learn as learn
+import fsengine.lookup as lookup
 import sorter_core as core
 from fsengine import Engine
 
@@ -18,6 +20,11 @@ class Base(unittest.TestCase):
         t = Path(self.tmp.name)
         core.UNDO_DIR = t / "undo"
         core.CACHE_PATH = t / "cache.json"
+        # never read the user's own rules while testing: their learned corrections or an enabled
+        # online-lookup config would change results (and could fire real network calls)
+        learn.CORR_PATH = str(t / "corrections.json")
+        lookup.CONFIG_PATH = str(t / "no-config.json")
+        lookup.CACHE_PATH = str(t / "hashcache.json")
         self.root = t / "Downloads"
         self.root.mkdir()
 
@@ -239,6 +246,28 @@ class TestEngineDetails(Base):
         self.assertEqual(self.v("Screenshot 2026-10-01.png", fx.png(1920, 1080)).path, "Images/Screenshots")
         self.assertEqual(self.v("Show.S01E02.720p.mp4", fx.mp4(1280, 720, 2700)).path, "Videos/TV Shows & Anime")
         self.assertEqual(self.v("clip.mp4", fx.mp4(1080, 1920, 15)).path, "Videos/Shorts & Vertical")
+
+    def test_a_test_run_never_reads_your_own_folder_config(self):
+        """Tests (and a scan that was not told otherwise) must not pick up ~/.file_sorter config."""
+        home = os.path.expanduser("~")
+        self.assertFalse(learn.CORR_PATH.startswith(home), "tests would read your real corrections")
+        self.assertFalse(lookup.CONFIG_PATH.startswith(home), "tests would read your real config")
+        self.assertFalse(lookup.CACHE_PATH.startswith(home), "tests would write your real hash cache")
+
+    def test_online_lookup_follows_the_config_and_defaults_to_off(self):
+        import fsengine.lookup as lookup_mod
+        self.assertFalse(lookup_mod.Lookup.auto().enabled, "the default must be offline")
+        cfg = Path(self.tmp.name) / "config.json"
+        cfg.write_text(json.dumps({"online_lookup": True, "providers": ["modrinth"], "timeout": 2}))
+        old, lookup_mod.CONFIG_PATH = lookup_mod.CONFIG_PATH, str(cfg)
+        try:
+            auto = lookup_mod.Lookup.auto()
+            self.assertTrue(auto.enabled)
+            self.assertEqual(auto.providers, ("modrinth",))
+            self.assertEqual(auto.timeout, 2.0)
+        finally:
+            lookup_mod.CONFIG_PATH = old
+        self.assertFalse(lookup_mod.Lookup.auto().enabled)
 
     def test_user_rules_override(self):
         rules = Path(self.tmp.name) / "rules.json"
