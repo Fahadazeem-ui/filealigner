@@ -1,7 +1,15 @@
-# FileSorter 3.1 – content-aware sorting (performance edition)
+# FileSorter 4.1 – content-aware sorting (stability + detection edition)
 
 Sorts by **what a file really is**, not by what its extension claims. Nothing is ever extracted:
 zips/jars are only *looked into* (table of contents + a few small files, in memory).
+
+**4.1 highlights**
+- Hard crash / freeze fix for large Downloads folders (1200–10k+ files)
+- Time-based progress throttle + determinate bar with ETA
+- Tighter adaptive workers & smaller classification batches under load
+- Expanded signatures (GGUF, EXR, email, parquet, more audio/video)
+- Chat Exports family (WhatsApp / Telegram / Discord style exports)
+- AI & Models + Mobile Backups top-level domains
 
 ## How it decides
 1. **Fingerprint** – magic bytes (png/jpeg/mp4/mp3/pdf/zip/exe/sqlite/font/…), so a wrong extension can’t fool it.
@@ -26,13 +34,13 @@ Worlds & Schematics, Servers, Bedrock, …}`, `Development/{Libraries/Java, Disc
 * **Audit** – only re-checks files already sitting in category folders (incl. old “Minecraft & Mods”) and moves the misplaced ones.
   Your own sub-folders inside a correct category (e.g. `Images/Holiday 2024`) are respected.
 
-## Performance system (new in 3.1)
+## Performance system (new in 3.1, hardened in 4.1)
 Big folders and multi-GB files no longer crash the process. A dedicated performance layer (`fsengine/perf.py`) provides:
 
 - **Adaptive worker pool** – thread count scales with CPU cores and available RAM (never more than is safe).
 - **Size tiers** – small / medium / large / huge. Deep analysis (full EXIF, PDF stream decompression, etc.) runs fully on the sizes where it actually improves accuracy; multi-GB files fall back to strong magic + name signals.
 - **Hard memory ceilings** on ZIP/TAR name lists, PDF text extraction and directory walks so a single pathological archive cannot exhaust RAM.
-- **Batch submission** of classification work + progress throttling so the UI and CLI stay responsive on 50 k+ file scopes.
+- **Batch submission** of classification work + **time-based progress throttling** so the UI and CLI stay responsive on 50 k+ file scopes.
 - **Graceful MemoryError / OSError handling** – one unreadable or huge file never aborts the whole scan.
 - **Bounded cache** – old entries are evicted; individual cache records are size-capped.
 
