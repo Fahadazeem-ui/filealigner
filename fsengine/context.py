@@ -134,6 +134,29 @@ class Ctx:
                                             label_prefix=f"{self.name} > {os.path.basename(n)}: "))
         return self._nested
 
+    # ------------------------------------------------------------------ lifecycle
+    def close(self) -> None:
+        """Release every OS handle this item opened.
+
+        Windows refuses to rename/move a file that still has an open handle, so a listing that is
+        never closed turns into "PermissionError [WinError 32]" the moment the sorter moves the
+        file.  Everything that opens a container must close it - this is that one place.
+        """
+        for sub in list(self.__dict__.get("_nested") or []):
+            sub.close()
+        lst = self.lst
+        if lst is not None:
+            try:
+                lst.close()
+            except Exception:
+                pass
+
+    def __enter__(self) -> "Ctx":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
     # ------------------------------------------------------------------ reads
     def text(self, basename: str, limit: int = probes.MAX_TEXT) -> str:
         return probes.text_at(self.lst, basename, limit) if self.lst is not None else ""
@@ -160,5 +183,10 @@ def open_container(path: str, ctx: Ctx):
     except Exception:
         lst = None
     if lst is not None:
+        if ctx.lst is not None:          # replace a previous listing without leaking its handle
+            try:
+                ctx.lst.close()
+            except Exception:
+                pass
         ctx.lst = lst
     return lst

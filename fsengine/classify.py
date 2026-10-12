@@ -6,6 +6,7 @@ only run when the cheap ones did not settle the question.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import posixpath
 import re
@@ -58,11 +59,13 @@ class Engine:
         if not worth:
             return self._folder_quick(low)
         lst = DirListing(path)
+        ctx = Ctx(path=path, lst=lst, name=os.path.basename(path), is_dir=True, budget=self.budget)
         try:
-            ctx = Ctx(path=path, lst=lst, name=os.path.basename(path), is_dir=True, budget=self.budget)
             board = self._run(ctx)
         finally:
-            lst.close()
+            ctx.close()
+            with contextlib.suppress(Exception):
+                lst.close()
         if board.best_score() >= 1.8:
             v = board.verdict()
             v.unit = True
@@ -101,8 +104,11 @@ class Engine:
 
     def _classify(self, path, name, ext, size) -> Verdict:
         ctx = Ctx(path=path, name=name, ext=ext, size=size, budget=self.budget)
-        board = self._run(ctx)
-        v = board.verdict()
+        try:
+            board = self._run(ctx)
+            v = board.verdict()
+        finally:
+            ctx.close()          # never leave the archive open: Windows cannot move an open file
         if not v.evidence:
             v.evidence = [f"{size:,} bytes", f"signature: {ctx.sniff.kind or 'nothing recognised'}",
                           "no rule, structure or content marker matched"]
@@ -358,12 +364,15 @@ class Engine:
 
 
 def identify_ctx_fast(ctx: Ctx, floor: float = 1.2) -> tuple[str, ...] | None:
-    """What is this nested archive? (cheap detectors only - used for archives inside archives)."""
+    """What is this nested archive? (cheap detectors only - used for archives inside archives).
+
+    The listing of `ctx` stays open: it is owned by the parent context, which closes everything.
+    """
     board = Board()
     try:
         for fn in FAST_DETECTORS:
             fn(ctx, board)
-        if ctx.lst is not None and board.best_score() < 1.2 and len(ctx.paths()) > 1:
+        if ctx.lst is not None and board.best_score() < floor and len(ctx.paths()) > 1:
             containers.composition(ctx, board)
     except Exception:
         return None

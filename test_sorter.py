@@ -275,8 +275,11 @@ class TestScale(Base):
         core.scan(str(self.root))
         second = time.time() - t
         self.assertEqual(len(r1.items), 3000)
-        self.assertLess(first, 20)
+        # a pathological scan (e.g. opening every container twice, or leaking handles) blows far
+        # past this; a Windows CI runner with real-time antivirus legitimately takes longer than Linux
+        self.assertLess(first, 60)
         self.assertLessEqual(second, first)
+        self.assertLess(second, 30)
 
 
 class TestRealWorldCases(Base):
@@ -491,6 +494,75 @@ class TestCorpusRoundTrip(Base):
         again = core.scan(str(self.root))
         stray = [i.name for i in again.items]
         self.assertEqual(stray, [], f"second scan still wants to move {stray[:10]}")
+
+
+class TestFileHandles(Base):
+    """Windows refuses to rename/move a file that still has an open handle (WinError 32).
+
+    That is not testable on Linux directly, so we record every ZipFile the engine opens and make
+    shutil.move behave like Windows: if anything is still open, the move fails.
+    """
+
+    def _record_zip_openings(self):
+        import fsengine.listing as listing
+        opened = []
+        real = listing.zipfile.ZipFile
+
+        class Recorder(real):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                opened.append(self)
+
+        listing.zipfile.ZipFile = Recorder
+        self.addCleanup(setattr, listing.zipfile, "ZipFile", real)
+        return opened, real
+
+    def test_every_archive_opened_is_closed_again(self):
+        opened, _ = self._record_zip_openings()
+        self.put("mod.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        self.put("lib.jar", fx.lib_jar("org.x", "x", "1.0"))
+        self.put("pack.zip", fx.zipbytes({"pack.mcmeta": '{"pack":{"pack_format":15}}',
+                                          "assets/minecraft/lang/en_us.json": "{}"}))
+        for name in ("mod.zip", "lib.jar", "pack.zip"):
+            Engine().classify_file(str(self.root / name))
+        self.assertTrue(opened, "nothing was opened - the test is not testing anything")
+        leaks = [z.filename for z in opened if z.fp is not None]
+        self.assertEqual(leaks, [], f"archives left open: {leaks}")
+
+    def test_sorting_survives_an_os_that_forbids_moving_open_files(self):
+        opened, _ = self._record_zip_openings()
+        real_move = core.shutil.move
+
+        def strict_move(src, dst):
+            if isinstance(src, str) and src.lower().endswith((".zip", ".jar", ".mcpack", ".mrpack")):
+                if any(z.fp is not None for z in opened):
+                    raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
+            return real_move(src, dst)
+
+        core.shutil.move = strict_move
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        fx.build(self.root)
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertTrue(out.moved, "nothing moved at all")
+        self.assertEqual(out.failed, [])
+        self.assertGreater(len([1 for a, _ in out.moved if a.lower().endswith((".zip", ".jar"))]), 5)
+
+    def test_unit_folders_do_not_hold_their_contents_open(self):
+        """A folder unit is read while listing it; the handle must be gone before it moves."""
+        import fsengine.listing as listing
+        self.put("MyPack/pack.mcmeta", '{"pack":{"pack_format":9}}')
+        self.put("MyPack/data/ns/functions/f.mcfunction", "say hi")
+        self.put("MyPack/readme.txt", "hello")
+        opened, _ = self._record_zip_openings()
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: real_move(src, dst) if not opened or all(z.fp is None for z in opened) \
+            else (_ for _ in ()).throw(PermissionError(32, "in use", src))
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        res = core.scan(str(self.root))
+        self.assertEqual(res.items[0].category, "Games/Minecraft/Datapacks")
+        out = core.execute(res)
+        self.assertEqual(out.failed, [])
 
 
 if __name__ == "__main__":

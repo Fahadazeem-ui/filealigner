@@ -117,12 +117,11 @@ class Corrections:
 
     def record_path(self, path: str, dest, label: str = "") -> bool:
         ctx = ctx_for(path)
-        tokens = fingerprint(ctx)
-        if ctx is not None and ctx.lst is not None:
-            try:
-                ctx.lst.close()
-            except Exception:
-                pass
+        try:
+            tokens = fingerprint(ctx)
+        finally:
+            if ctx is not None:
+                ctx.close()
         return self.record(tokens, dest, label)
 
     def save(self) -> None:
@@ -137,10 +136,16 @@ class Corrections:
 def ctx_for(path: str):
     """Build a Ctx for an existing path (used when the user teaches a correction)."""
     from .context import Budget, Ctx, open_container
-    if os.path.isdir(path):
-        from .listing import DirListing
-        return Ctx(path=path, lst=DirListing(path), name=os.path.basename(path), is_dir=True, budget=Budget())
-    ctx = Ctx(path=path, budget=Budget())
-    if ctx.is_container:
-        open_container(path, ctx)
-    return ctx
+    try:
+        if os.path.isdir(path):
+            from .listing import DirListing
+            return Ctx(path=path, lst=DirListing(path), name=os.path.basename(path), is_dir=True, budget=Budget())
+        ctx = Ctx(path=path, budget=Budget())
+        if ctx.is_container:
+            open_container(path, ctx)
+        return ctx
+    except Exception:
+        try:
+            return Ctx(path=path, budget=Budget())
+        except Exception:
+            return None
