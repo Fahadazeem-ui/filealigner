@@ -86,6 +86,27 @@ TOP_LEVEL_DOMAINS = ["Images", "Videos", "Audio", "Documents", "Presentations", 
 RESPECT_SUBFOLDERS = {"Images", "Videos", "Audio", "Documents", "Presentations", "Spreadsheets & Data", "Ebooks & Comics", "Fonts"}
 
 
+# Name-only hints (tier 1): weak by design - they never decide alone, they nudge.
+# (regex, destination, weight, what it means)
+NAME_SIGNALS: list[tuple[str, tuple[str, ...], float, str]] = [
+    (r"shaders?", ("Games", "Minecraft", "Shaders"), 0.85, "name says shader pack"),
+    (r"(resource|texture)[ _-]?pack|faithful|vanilla[ _-]?tweaks|texturepack", ("Games", "Minecraft", "Resourcepacks"), 0.8, "name says resource pack"),
+    (r"data[ _-]?pack", ("Games", "Minecraft", "Datapacks"), 0.8, "name says datapack"),
+    (r"mod[ _-]?pack|curseforge|modrinth", ("Games", "Minecraft", "Modpacks"), 0.8, "name says modpack"),
+    (r"neoforge", ("Games", "Minecraft", "Mods", "NeoForge"), 0.8, "name mentions NeoForge"),
+    (r"fabric", ("Games", "Minecraft", "Mods", "Fabric"), 0.8, "name mentions Fabric"),
+    (r"quilt", ("Games", "Minecraft", "Mods", "Quilt"), 0.7, "name mentions Quilt"),
+    (r"forge(?!rock)", ("Games", "Minecraft", "Mods", "Forge"), 0.7, "name mentions Forge"),
+    (r"discord", ("Development", "Discord Bots"), 0.9, "name mentions Discord"),
+    (r"\bbot\b|selfbot", ("Development", "Discord Bots"), 0.3, "name mentions a bot"),
+    (r"telegram[ _-]?bot|whatsapp[ _-]?bot|slack[ _-]?bot", ("Development", "Bots & Automations"), 0.7, "name mentions a chat bot"),
+    (r"installer|setup|\bpatch\b|update[ _-]?pack", ("Software", "Installers"), 0.6, "name says installer"),
+    (r"\bplugins?\b", ("Games", "Minecraft", "Plugins", "Bukkit-Spigot-Paper"), 0.35, "name mentions a plugin"),
+    (r"\bworld\b|\bsaves?\b", ("Games", "Minecraft", "Worlds & Schematics", "Worlds"), 0.3, "name mentions a world"),
+    (r"\bserver\b", ("Games", "Minecraft", "Servers"), 0.3, "name mentions a server"),
+]
+
+
 class UserRules:
     """~/.file_sorter/rules.json:
     {"extensions": {".xyz": ["Games","Foo"]},
@@ -123,7 +144,12 @@ _EXTRA_NAMES = ["Minecraft", "Mods", "Fabric", "Forge", "NeoForge", "Quilt", "Mu
                 "Screen Recordings", "Camera Clips", "TV Shows & Anime", "Movies", "Shorts & Vertical", "Courses & Lectures", "Music",
                 "Voice Notes & Recordings", "Podcasts & Audiobooks", "Samples & Sound Effects", "Java Applications", "Programs",
                 "Portable Apps & Installed Programs", "Unidentified", "Damaged or Unreadable", "Empty Files", "Unreadable", "Books", "Comics",
-                "Scans & Image PDFs", "Finance", "Email"]
+                "Scans & Image PDFs", "Finance", "Email", "Zipped Collections", "Zipped Projects", "Zipped Bundles",
+                "Mixed Contents", "Mixed Scripts", "Bots & Automations", "LiteLoader", "Loose Functions", "Skript",
+                "Region Files", "Notebooks", "Game Engines", "Desktop app project", "SQL & Databases", "Lua", "R",
+                "Julia", "Elixir", "Swift", "Go", "Rust", "PHP", "Ruby", "Dart & Flutter", "C# & .NET", "C & C++",
+                "Java & Kotlin", "JavaScript & Node", "Python", "Other Repositories", "Static Sites", "Web Apps",
+                "Android", "Mobile app project", "Undocumented jar", "Empty jar", "Java Apps"]
 
 
 def taxonomy_names() -> set[str]:

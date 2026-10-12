@@ -9,6 +9,10 @@ jobs:
         with: { python-version: "3.12" }
       - run: pip install pyinstaller
       - run: python test_sorter.py
+      - run: python benchmark.py --json bench-report.json
       - run: pyinstaller --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
       - uses: actions/upload-artifact@v4
         with: { name: FileSorter-exe, path: dist/FileSorter.exe }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: accuracy-report, path: bench-report.json }

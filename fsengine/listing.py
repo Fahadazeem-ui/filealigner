@@ -93,8 +93,9 @@ class Listing:
 
 
 class ZipListing(Listing):
-    def __init__(self, path: str):
-        self._zf = zipfile.ZipFile(path)
+    def __init__(self, src, display: str = ""):
+        self._zf = zipfile.ZipFile(src)
+        self.display = display or str(src)
         infos = self._zf.infolist()[:MAX_NAMES]
         self._sizes = {i.filename: i.file_size for i in infos}
         super().__init__([i.filename for i in infos if not i.is_dir()])
@@ -117,8 +118,9 @@ class ZipListing(Listing):
 
 
 class TarListing(Listing):
-    def __init__(self, path: str):
+    def __init__(self, path: str, display: str = ""):
         self._tf = tarfile.open(path, "r:*")
+        self.display = display or str(path)
         names = []
         for i, m in enumerate(self._tf):
             if i >= MAX_NAMES // 3:
