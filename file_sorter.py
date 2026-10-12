@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import sys
 import threading
 
@@ -319,7 +320,9 @@ def gui():
         entry.insert(0, current)
         entry.pack(padx=12)
         def save():
-            dest = tuple(x.strip() for x in entry.get().split("/") if x.strip())
+            # keep the user's typing, minus characters that would break a path on Windows
+            parts = (re.sub(r'[<>:"|?*\r\n\t]', "", x).strip() for x in entry.get().split("/"))
+            dest = tuple(p for p in parts if p)
             dlg.destroy()
             if len(dest) < 1:
                 return

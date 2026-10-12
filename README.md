@@ -88,7 +88,9 @@ per tag:     tricky 12/12 100% | folders 8/8 100%
 ```
 
 Add your own wrongly-sorted files as cases there; the benchmark tells you the moment a change helps or hurts.
-`python test_sorter.py` runs 44 unit/integration tests (including a round trip over the whole corpus).
+`python test_sorter.py` runs 52 unit/integration tests (including a round trip over the whole corpus and
+Windows-style file-lock emulation); `python test_gui.py` drives the real GUI (preview, teach, sort, undo)
+against a stub Tk, so a broken button can never ship unnoticed.
 
 ## Your own rules
 

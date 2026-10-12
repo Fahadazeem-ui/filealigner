@@ -12,10 +12,10 @@ jobs:
         shell: bash
         run: |
           set +e
-          python -m unittest -v test_sorter > test-output.txt 2>&1
+          python -m unittest -v test_sorter test_gui > test-output.txt 2>&1
           code=$?
           {
-            echo "### test_sorter.py - exit $code"
+            echo "### tests (test_sorter + test_gui) - exit $code"
             echo '```text'
             tail -c 7000 test-output.txt
             echo '```'
