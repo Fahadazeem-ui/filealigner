@@ -1,11 +1,13 @@
 """FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/.
 
-Performance (3.1 + 4.1):
+Performance (3.1 + 4.1 + 4.2.1):
 - Adaptive worker count from fsengine.perf
 - Progress throttling (time-based) on huge listings – prevents UI freeze at ~1200 files
 - MemoryError / OSError fallbacks so a single bad file never kills the whole scan
 - Cache still used; entry count and size are bounded
 - Smaller classification batches under load
+- 4.2.1: per-file hard timeout (12s) so one pathological zip/audio cannot freeze Downloads
+- 4.2.1: even more conservative workers for 1k–4k file folders (typical Downloads)
 """
 from __future__ import annotations
 
@@ -33,6 +35,10 @@ PARTIAL_EXT = {".crdownload", ".part", ".tmp", ".download", ".partial", ".opdown
 # folders the OLD extension-only sorter created; audit mode re-checks what is inside them
 LEGACY_FOLDERS = {"programs & installers", "spreadsheets", "minecraft & mods", "others", "code & web", "disk images", "3d models",
                   "pictures", "music", "video", "docs", "compressed"}
+
+# Hard ceiling: no single file may block the scan longer than this (seconds).
+# Protects against rare pathological zips / AV locks / network-ish files in Downloads.
+FILE_TIMEOUT_SEC = 12.0
 
 
 @dataclass
@@ -256,25 +262,45 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     if progress and done[0]:
         throttle.force(done[0], total, "analysing contents")
 
+    def _classify_one(p: str, size: int) -> Verdict:
+        try:
+            return eng.classify_file(p, size)
+        except MemoryError:
+            from fsengine.model import review
+            return review("Out of memory while analysing", [f"size={size}"], "Unreadable")
+        except Exception as exc:  # noqa: BLE001
+            from fsengine.model import review
+            return review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
+
     def work(args):
         p, size, key = args
         if cancelled():
             return p, None, key
-        try:
-            v = eng.classify_file(p, size)
-        except MemoryError:
+        # Per-file timeout: run classify in a short-lived thread so one bad zip
+        # or AV-locked file cannot freeze the whole Downloads scan.
+        box: list = [None]
+        def _run():
+            box[0] = _classify_one(p, size)
+        th = threading.Thread(target=_run, daemon=True)
+        th.start()
+        th.join(timeout=FILE_TIMEOUT_SEC)
+        if th.is_alive():
             from fsengine.model import review
-            v = review("Out of memory while analysing", [f"size={size}"], "Unreadable")
-        except Exception as exc:  # noqa: BLE001
-            from fsengine.model import review
-            v = review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
+            v = review("Timed out while analysing (skipped deep look)",
+                       [f">{FILE_TIMEOUT_SEC:.0f}s", f"size={size}", "typical of locked or pathological archives"],
+                       "Unreadable")
+        else:
+            v = box[0]
+            if v is None:
+                from fsengine.model import review
+                v = review("Could not analyse file", ["empty result"], "Unreadable")
         with lock:
             done[0] += 1
             throttle.maybe(done[0], total, "analysing contents")
         return p, v, key
 
     if todo and not cancelled():
-        batch_size = 800 if total > 1500 else 1500
+        batch_size = 400 if total > 1500 else (800 if total > 800 else 1500)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
             for i in range(0, len(todo), batch_size):
                 if cancelled():
@@ -283,7 +309,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                 futures = [ex.submit(work, a) for a in batch]
                 for fut in as_completed(futures):
                     try:
-                        p, v, key = fut.result()
+                        p, v, key = fut.result(timeout=FILE_TIMEOUT_SEC + 3)
                     except Exception:
                         continue
                     if v is not None:
@@ -292,8 +318,8 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                             cache[key] = v.to_json()
                         except Exception:
                             pass
-                if total > 2000:
-                    time.sleep(0.02)
+                if total > 1200:
+                    time.sleep(0.03)
 
     if use_cache:
         _save_cache(cache)
