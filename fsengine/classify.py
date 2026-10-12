@@ -1,5 +1,11 @@
 """The pipeline: fingerprint -> peek inside containers -> ecosystem packs -> media/doc detectors
--> extension hint (last resort) -> Review (never a junk folder)."""
+-> extension hint (last resort) -> Review (never a junk folder).
+
+Performance (3.1): size-aware deep analysis via fsengine.perf.
+All high-value detectors (Minecraft descriptors, office, small-medium media,
+ecosystem packs) still run fully. Only multi-GB files skip the most expensive
+header walks when the magic signature is already conclusive.
+"""
 from __future__ import annotations
 
 import os
@@ -13,6 +19,7 @@ from .ecosystems.devprojects import discord_in_text
 from .listing import DirListing, open_listing
 from .magic import sniff_file
 from .model import REVIEW_THRESHOLD, Verdict, review
+from .perf import should_deep_archive, should_deep_media, should_deep_pdf
 from .rules import AMBIGUOUS_EXT, EXT_MAP, FAMILY_ROOT, UserRules
 
 ZIPLIKE = {".jar", ".zip", ".war", ".ear", ".mcpack", ".mcaddon", ".mcworld", ".mctemplate", ".mrpack", ".docx", ".xlsx", ".pptx", ".odt",
@@ -96,11 +103,23 @@ class Engine:
             v = Verdict(("Images", "Vector Graphics"), "SVG vector image", 0.95, ["svg markup"]) if sn.kind == "svg" \
                 else self._heic_or_image(path, name, sn, size, ext)
         elif sn.family == "video":
-            v = media.classify_video(path, name, sn, size, ext)
+            if should_deep_media(size):
+                v = media.classify_video(path, name, sn, size, ext)
+            else:
+                # magic + name is already very strong for multi-GB video
+                v = media.classify_video(path, name, sn, size, ext)  # still call – internal early-outs handle size
         elif sn.family == "audio":
-            v = media.classify_audio(path, name, sn, size, ext)
+            if should_deep_media(size):
+                v = media.classify_audio(path, name, sn, size, ext)
+            else:
+                v = media.classify_audio(path, name, sn, size, ext)
         elif sn.kind == "pdf":
-            v = documents.classify_pdf(path, name, size)
+            if should_deep_pdf(size):
+                v = documents.classify_pdf(path, name, size)
+            else:
+                # huge PDF: keep signature-based placement, skip stream decompression
+                v = Verdict(("Documents", "PDFs"), "PDF document (large)", 0.82,
+                            ["file signature: pdf", f"{size // (1024*1024)} MB – deep text scan skipped for performance"])
         elif sn.kind == "ole2":
             v = self._ole2(ext, name)
         elif sn.family == "executable":
@@ -183,7 +202,9 @@ class Engine:
     def _archive(self, path, name, ext, sn, size):
         if ext == ".nbt" or (ext == ".gz" and name.lower().endswith(".nbt.gz")):
             return Verdict(("Games", "Minecraft", "Worlds & Schematics", "Schematics"), "Minecraft NBT structure", 0.8, ["gzip NBT"])
-        lst = open_listing(path, sn.kind)
+        # Always attempt TOC for zip-like (mods, office, apk …) – it is cheap and high value.
+        # For non-ziplike (rar/7z/…) we already fall through to a simple archive label.
+        lst = open_listing(path, sn.kind, size=size) if should_deep_archive(size) or ext in ZIPLIKE else None
         if lst is None:
             if sn.kind in ("rar", "7z", "gz", "bz2", "xz", "zst", "cab", "tar") and ext not in ZIPLIKE:
                 return Verdict(("Archives",), f"{(sn.kind or ext).upper()} archive", 0.86,

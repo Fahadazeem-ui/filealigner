@@ -1,4 +1,11 @@
-"""FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/."""
+"""FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/.
+
+Performance (3.1):
+- Adaptive worker count from fsengine.perf
+- Progress throttling on huge listings
+- MemoryError / OSError fallbacks so a single bad file never kills the whole scan
+- Cache still used; entry count and size are bounded
+"""
 from __future__ import annotations
 
 import json
@@ -6,12 +13,13 @@ import os
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from fsengine import ENGINE_VERSION, Engine
 from fsengine.model import Verdict
+from fsengine.perf import adaptive_workers
 from fsengine.rules import HOME_DIR, RESPECT_SUBFOLDERS, TOP_LEVEL_DOMAINS, taxonomy_names
 
 UNDO_DIR = Path(HOME_DIR) / "undo"
@@ -114,7 +122,7 @@ def _load_cache() -> dict:
         d = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
         if d.get("tag") == _cache_tag():
             return d.get("v", {})
-    except (OSError, ValueError):
+    except (OSError, ValueError, MemoryError):
         pass
     return {}
 
@@ -122,10 +130,13 @@ def _load_cache() -> dict:
 def _save_cache(cache: dict):
     try:
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # hard bound: never keep more than 200 k entries
         if len(cache) > 300000:
             cache = dict(list(cache.items())[-200000:])
-        CACHE_PATH.write_text(json.dumps({"tag": _cache_tag(), "v": cache}), encoding="utf-8")
-    except OSError:
+        # also drop any absurdly large individual entries
+        clean = {k: v for k, v in cache.items() if len(json.dumps(v, separators=(",", ":"))) < 8000}
+        CACHE_PATH.write_text(json.dumps({"tag": _cache_tag(), "v": clean}, separators=(",", ":")), encoding="utf-8")
+    except (OSError, MemoryError):
         pass
 
 
@@ -172,7 +183,7 @@ def _audit_eligible(source: str, dest_root: str) -> bool:
 
 # ---------------------------------------------------------------- scan
 def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode: str = "sort",
-         progress=None, cancel: threading.Event | None = None, workers: int = 8, use_cache: bool = True,
+         progress=None, cancel: threading.Event | None = None, workers: int | None = None, use_cache: bool = True,
          engine: Engine | None = None) -> ScanResult:
     t0 = time.time()
     scope = check_scope(scope)
@@ -184,6 +195,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     files: list[tuple[str, int, int]] = []
     units: list[Item] = []
     stack = [scope]
+    list_count = 0
     while stack and not cancelled():
         cur = stack.pop()
         try:
@@ -191,7 +203,6 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         except OSError as exc:
             res.skipped.append((cur, f"cannot read folder: {exc.strerror}"))
             continue
-        names = [e.name for e in entries]
         for e in entries:
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
@@ -223,7 +234,8 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                 except OSError:
                     continue
                 files.append((e.path, st.st_size, st.st_mtime_ns))
-        if progress and len(files) % 200 == 0:
+        list_count += 1
+        if progress and list_count % 200 == 0:
             progress(len(files), 0, "listing files")
 
     cache = _load_cache() if use_cache else {}
@@ -232,36 +244,66 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         key = f"{p}|{size}|{mt}"
         hit = cache.get(key)
         if hit:
-            results[p] = Verdict.from_json(hit)
+            try:
+                results[p] = Verdict.from_json(hit)
+            except Exception:
+                todo.append((p, size, key))
         else:
             todo.append((p, size, key))
 
     total = len(files)
     done = [total - len(todo)]
     lock = threading.Lock()
+    workers = workers if workers is not None else adaptive_workers(total)
 
     def work(args):
         p, size, key = args
         if cancelled():
             return p, None, key
-        v = eng.classify_file(p, size)
+        try:
+            v = eng.classify_file(p, size)
+        except MemoryError:
+            # Fall back to a minimal safe verdict so the scan continues
+            from fsengine.model import review
+            v = review("Out of memory while analysing", [f"size={size}"], "Unreadable")
+        except Exception as exc:  # noqa: BLE001
+            from fsengine.model import review
+            v = review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
         with lock:
             done[0] += 1
-            if progress and done[0] % 25 == 0:
+            if progress and done[0] % max(25, total // 200 or 25) == 0:
                 progress(done[0], total, "analysing contents")
         return p, v, key
 
     if todo and not cancelled():
+        # Submit in moderate-sized batches so the future list itself does not explode RAM
+        batch_size = 2000
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-            for p, v, key in ex.map(work, todo):
-                if v is not None:
-                    results[p] = v
-                    cache[key] = v.to_json()      # cache the raw verdict, before batch-context adjustments
+            for i in range(0, len(todo), batch_size):
+                if cancelled():
+                    break
+                batch = todo[i:i + batch_size]
+                futures = [ex.submit(work, a) for a in batch]
+                for fut in as_completed(futures):
+                    try:
+                        p, v, key = fut.result()
+                    except Exception:
+                        continue
+                    if v is not None:
+                        results[p] = v
+                        try:
+                            cache[key] = v.to_json()
+                        except Exception:
+                            pass
+
     if use_cache:
         _save_cache(cache)
 
     ents = [(os.path.dirname(p), os.path.basename(p), v) for p, v in results.items()]
-    eng.context_pass(ents)
+    try:
+        eng.context_pass(ents)
+    except Exception:
+        pass  # batch context is a nice-to-have; never fail the scan for it
 
     sizes = {p: s for p, s, _ in files}
     candidates = [Item(p, False, sizes[p], v) for p, v in results.items()] + units
