@@ -1,10 +1,7 @@
 """The pipeline: fingerprint -> peek inside containers -> ecosystem packs -> media/doc detectors
 -> extension hint (last resort) -> Review (never a junk folder).
 
-Performance (3.1): size-aware deep analysis via fsengine.perf.
-All high-value detectors (Minecraft descriptors, office, small-medium media,
-ecosystem packs) still run fully. Only multi-GB files skip the most expensive
-header walks when the magic signature is already conclusive.
+FileSorter 4 – expanded coverage, cleaner decisions, zero junk folders.
 """
 from __future__ import annotations
 
@@ -26,7 +23,6 @@ ZIPLIKE = {".jar", ".zip", ".war", ".ear", ".mcpack", ".mcaddon", ".mcworld", ".
            ".ods", ".odp", ".epub", ".apk", ".xapk", ".apks", ".aab", ".ipa", ".vsix", ".xpi", ".crx", ".whl", ".nupkg", ".cbz", ".3mf",
            ".appx", ".msix", ".zipx", ".sketch", ".kra"}
 
-# cheap "something interesting is in this folder" names (lowercase). Only folders that show one of these get a deep look.
 TRIGGERS = {"pack.mcmeta", "fabric.mod.json", "quilt.mod.json", "mcmod.info", "plugin.yml", "paper-plugin.yml", "bungee.yml",
             "velocity-plugin.json", "level.dat", "levelname.txt", "server.properties", "manifest.json", "modrinth.index.json",
             "mmc-pack.json", "instance.cfg", "shaders", "mods", "saves", "versions", "options.txt", "meta-inf", "package.json",
@@ -34,7 +30,6 @@ TRIGGERS = {"pack.mcmeta", "fabric.mod.json", "quilt.mod.json", "mcmod.info", "p
             "settings.gradle", "cargo.toml", "go.mod", "composer.json", "gemfile", "pubspec.yaml", "cmakelists.txt", ".git",
             "projectsettings", "project.godot", "index.html", "mimetype", "androidmanifest.xml", "environment.yml", ".env", "src"}
 TRIGGER_SUFFIX = (".sln", ".csproj", ".fsproj", ".uproject")
-NEVER_DESCEND_CFG = "pyvenv.cfg"
 
 
 class Engine:
@@ -43,7 +38,6 @@ class Engine:
 
     # ------------------------------------------------------------ folders (units)
     def classify_dir(self, path: str, entries: list[str]) -> Verdict | None:
-        """entries = immediate child names. Returns a unit verdict, or None for an ordinary folder."""
         low = [e.lower() for e in entries]
         trig = any(e in TRIGGERS or e.endswith(TRIGGER_SUFFIX) for e in low)
         if trig:
@@ -81,10 +75,11 @@ class Engine:
                 size = 0
         try:
             v = self._classify(path, name, ext, size)
-        except Exception as exc:   # never crash a scan because one file is weird
+        except Exception as exc:
             v = review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
         if v.confidence < REVIEW_THRESHOLD and v.dest[0] != "Review":
-            v = Verdict(("Review", "Unidentified"), v.label, v.confidence, v.evidence + [f"too unsure to file under {v.path}"])
+            v = Verdict(("Review", "Unidentified"), v.label, v.confidence,
+                        v.evidence + [f"too unsure to file under {v.path}"])
         return v
 
     def _classify(self, path, name, ext, size) -> Verdict:
@@ -93,33 +88,32 @@ class Engine:
             return Verdict(um[0], "Your custom rule", 0.99, [um[1]])
         if size == 0:
             return Verdict(("Review", "Empty Files"), "Empty file (0 bytes)", 0.6, ["0 bytes"])
+
         sn = sniff_file(path, ext)
         mismatch = self._mismatch_note(ext, sn)
 
         v = None
-        if sn.kind in ("zip", "tar", "gz", "bz2", "xz", "zst", "rar", "7z", "cab") or ext in ZIPLIKE or ext.startswith(".tar"):
+
+        # --- high-value special kinds first ---
+        if sn.kind == "eml":
+            v = Verdict(("Documents", "Email"), "Email message", 0.93, ["email headers detected"])
+        elif sn.kind == "gguf":
+            v = Verdict(("AI & Models",), "GGUF model weights", 0.96, ["GGUF magic"])
+        elif sn.kind in ("zip", "tar", "gz", "bz2", "xz", "zst", "rar", "7z", "cab") or ext in ZIPLIKE or ext.startswith(".tar"):
             v = self._archive(path, name, ext, sn, size)
         elif sn.family == "image":
-            v = Verdict(("Images", "Vector Graphics"), "SVG vector image", 0.95, ["svg markup"]) if sn.kind == "svg" \
-                else self._heic_or_image(path, name, sn, size, ext)
+            v = (Verdict(("Images", "Vector Graphics"), "SVG vector image", 0.95, ["svg markup"])
+                 if sn.kind == "svg" else self._heic_or_image(path, name, sn, size, ext))
         elif sn.family == "video":
-            if should_deep_media(size):
-                v = media.classify_video(path, name, sn, size, ext)
-            else:
-                # magic + name is already very strong for multi-GB video
-                v = media.classify_video(path, name, sn, size, ext)  # still call – internal early-outs handle size
+            v = media.classify_video(path, name, sn, size, ext)
         elif sn.family == "audio":
-            if should_deep_media(size):
-                v = media.classify_audio(path, name, sn, size, ext)
-            else:
-                v = media.classify_audio(path, name, sn, size, ext)
+            v = media.classify_audio(path, name, sn, size, ext)
         elif sn.kind == "pdf":
             if should_deep_pdf(size):
                 v = documents.classify_pdf(path, name, size)
             else:
-                # huge PDF: keep signature-based placement, skip stream decompression
                 v = Verdict(("Documents", "PDFs"), "PDF document (large)", 0.82,
-                            ["file signature: pdf", f"{size // (1024*1024)} MB – deep text scan skipped for performance"])
+                            ["file signature: pdf", f"{size // (1024*1024)} MB – deep text scan skipped"])
         elif sn.kind == "ole2":
             v = self._ole2(ext, name)
         elif sn.family == "executable":
@@ -145,8 +139,10 @@ class Engine:
             v = documents.classify_text_doc(path, name, ".rtf", size)
         elif sn.text:
             v = self._text(path, name, ext, size, sn)
+
         if v is None:
             v = self._by_extension(path, name, ext, sn, size)
+
         if mismatch:
             v.evidence.append(mismatch)
         return v
@@ -156,16 +152,18 @@ class Engine:
     def _mismatch_note(ext: str, sn) -> str:
         hint = EXT_MAP.get(ext)
         if sn.kind and hint and sn.family in FAMILY_ROOT and hint[0] != FAMILY_ROOT[sn.family][0] \
-                and not (sn.kind in ("zip", "pe", "ole2", "text", "gz")):
+                and not (sn.kind in ("zip", "pe", "ole2", "text", "gz", "eml")):
             return f"note: extension {ext} suggests {hint[0]}, but content is {sn.kind} (content wins)"
         return ""
 
     def _heic_or_image(self, path, name, sn, size, ext):
-        if sn.kind in ("heic", "avif", "cr3", "psd", "tiff", "jxl") or sn.kind not in ("png", "jpeg", "gif", "webp", "bmp", "ico"):
+        if sn.kind in ("heic", "avif", "cr3", "psd", "tiff", "jxl", "exr") or sn.kind not in ("png", "jpeg", "gif", "webp", "bmp", "ico"):
             if sn.kind == "cr3":
                 return Verdict(("Images", "RAW Photos"), "Canon RAW photo", 0.95, ["ftyp crx"])
             if sn.kind == "psd":
                 return Verdict(("Images", "Design Files"), "Photoshop file", 0.96, ["8BPS signature"])
+            if sn.kind == "exr":
+                return Verdict(("Images", "Design Files"), "OpenEXR image", 0.94, ["EXR signature"])
             if sn.kind == "tiff" and ext in (".cr2", ".nef", ".arw", ".dng", ".orf", ".rw2", ".raf"):
                 return Verdict(("Images", "RAW Photos"), "RAW photo", 0.9, [f"TIFF container, {ext}"])
             if sn.kind == "heic":
@@ -175,9 +173,15 @@ class Engine:
         return media.classify_image(path, name, sn, size, ext)
 
     def _ole2(self, ext, name):
-        m = {".doc": (("Documents",), "Word document (legacy)"), ".xls": (("Spreadsheets & Data",), "Excel sheet (legacy)"),
-             ".ppt": (("Presentations",), "PowerPoint (legacy)"), ".msi": (("Software", "Installers"), "Windows installer (MSI)"),
-             ".pub": (("Documents",), "Publisher document"), ".vsd": (("Documents",), "Visio diagram"), ".msg": (("Documents", "Email"), "Outlook message")}
+        m = {
+            ".doc": (("Documents",), "Word document (legacy)"),
+            ".xls": (("Spreadsheets & Data",), "Excel sheet (legacy)"),
+            ".ppt": (("Presentations",), "PowerPoint (legacy)"),
+            ".msi": (("Software", "Installers"), "Windows installer (MSI)"),
+            ".pub": (("Documents",), "Publisher document"),
+            ".vsd": (("Documents",), "Visio diagram"),
+            ".msg": (("Documents", "Email"), "Outlook message"),
+        }
         if ext in m:
             return Verdict(m[ext][0], m[ext][1], 0.9, ["OLE2 compound file + extension"])
         return Verdict(("Documents",), "Legacy Office file", 0.6, ["OLE2 compound file, unknown flavour"])
@@ -202,13 +206,11 @@ class Engine:
     def _archive(self, path, name, ext, sn, size):
         if ext == ".nbt" or (ext == ".gz" and name.lower().endswith(".nbt.gz")):
             return Verdict(("Games", "Minecraft", "Worlds & Schematics", "Schematics"), "Minecraft NBT structure", 0.8, ["gzip NBT"])
-        # Always attempt TOC for zip-like (mods, office, apk …) – it is cheap and high value.
-        # For non-ziplike (rar/7z/…) we already fall through to a simple archive label.
         lst = open_listing(path, sn.kind, size=size) if should_deep_archive(size) or ext in ZIPLIKE else None
         if lst is None:
             if sn.kind in ("rar", "7z", "gz", "bz2", "xz", "zst", "cab", "tar") and ext not in ZIPLIKE:
                 return Verdict(("Archives",), f"{(sn.kind or ext).upper()} archive", 0.86,
-                               ["contents not inspectable without extracting (no built-in reader for this format)"])
+                               ["contents not inspectable without extracting"])
             if ext in (".zip", ".jar", ".mcpack", ".mrpack", ".docx", ".xlsx", ".pptx") or sn.kind == "zip":
                 return Verdict(("Review", "Damaged or Unreadable"), "Corrupt or unreadable zip", 0.4, ["zip directory could not be read"])
             return Verdict(("Archives",), "Archive", 0.7, [f"extension {ext}"])
@@ -234,6 +236,11 @@ class Engine:
     def _text(self, path, name, ext, size, sn):
         head = sn.head[:4096].decode("utf-8", "replace")
         low = head.lower()
+
+        # Email
+        if sn.kind == "eml" or ("from:" in low and ("subject:" in low or "received:" in low)):
+            return Verdict(("Documents", "Email"), "Email message", 0.92, ["email headers"])
+
         if ext in (".srt", ".vtt", ".ass", ".ssa", ".sub") or re.search(r"\d\d:\d\d:\d\d[,.]\d{2,3}\s*-->\s*\d\d:\d\d", head):
             return Verdict(("Videos", "Subtitles"), "Subtitle file", 0.93, ["timecode cues (-->)"])
         if "---- minecraft crash report ----" in low:
@@ -242,6 +249,7 @@ class Engine:
             return Verdict(("Games", "Minecraft", "Logs & Crash Reports"), "Minecraft log", 0.93, ["[Server thread/INFO] style lines"])
         if "-----begin " in low and "-----" in low:
             return Verdict(("Development", "Keys & Certificates"), "Key / certificate (PEM)", 0.93, ["PEM block"])
+
         if ext in (".py", ".js", ".mjs", ".cjs", ".ts", ".java", ".kt", ".go", ".cs") and size < 2_000_000:
             try:
                 with open(path, "rb") as f:
@@ -250,34 +258,41 @@ class Engine:
                 body = head
             if discord_in_text(body):
                 return Verdict(("Development", "Discord Bots"), "Discord bot script", 0.85, ["imports a Discord library"])
+
         if ext == ".ts":
             return Verdict(("Development", "Scripts", "JavaScript & TypeScript"), "TypeScript source", 0.9, ["text, not an MPEG stream"])
+
         if ext in (".txt", ".md", ".markdown", ".rst") or ext == "":
             if ext == "":
                 if low.startswith("#!"):
                     return Verdict(("Development", "Scripts", "Shell & Batch"), "Script (shebang)", 0.85, ["#! line"])
                 return Verdict(("Documents", "Notes & Text"), "Text file without extension", 0.6, ["plain text"])
             return documents.classify_text_doc(path, name, ext, size)
+
         if ext in (".html", ".htm") and "<html" in low:
             return None
         if ext == ".json" and size < 1_500_000:
             return None
         if ext in AMBIGUOUS_EXT or ext not in EXT_MAP:
-            return Verdict(("Documents", "Notes & Text"), f"Unknown text file ({ext or 'no ext'})", 0.55, ["plain text, unfamiliar extension"])
+            return Verdict(("Documents", "Notes & Text"), f"Unknown text file ({ext or 'no ext'})", 0.55,
+                           ["plain text, unfamiliar extension"])
         return None
 
     def _by_extension(self, path, name, ext, sn, size):
+        # AI model extensions get special treatment
+        if ext in (".gguf", ".safetensors", ".ckpt", ".pt", ".pth", ".onnx", ".tflite"):
+            return Verdict(("AI & Models",), f"AI / ML model ({ext})", 0.88, [f"extension {ext}"])
+
         if ext in EXT_MAP and ext not in AMBIGUOUS_EXT:
             dest = EXT_MAP[ext]
             return Verdict(dest, f"{ext} file", 0.76, [f"extension {ext} only (content not conclusive)"])
         if ext == ".jar":
             return Verdict(("Review", "Unidentified"), "Jar that is not a readable zip", 0.35, ["could not open as archive"])
-        return review(f"Unknown file type ({ext or 'no extension'})", [f"{size:,} bytes", f"signature: {sn.kind or 'none recognised'}"],
-                      "Unidentified")
+        return review(f"Unknown file type ({ext or 'no extension'})",
+                      [f"{size:,} bytes", f"signature: {sn.kind or 'none recognised'}"], "Unidentified")
 
     # ------------------------------------------------------------ batch/context signals
     def context_pass(self, entries: list[tuple[str, str, Verdict]]):
-        """entries: (dir, filename, verdict). Weakly identified jars follow what their siblings clearly are."""
         by_dir = defaultdict(list)
         for d, n, v in entries:
             if n.lower().endswith(".jar"):
