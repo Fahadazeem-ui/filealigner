@@ -23,8 +23,9 @@ MAX_PDF_READ       = 2_000_000
 MAX_OFFICE_READ    = 300_000
 MAX_TEXT_READ      = 80_000
 MAX_MOOV_SIZE      = 32 * 1024 * 1024     # 32 MB
-MAX_WORKERS_CAP    = 12
+MAX_WORKERS_CAP    = 8          # lowered: more workers rarely help and raise memory pressure
 MIN_WORKERS        = 2
+PROGRESS_MIN_INTERVAL = 0.35    # seconds between progress callbacks (prevents UI/queue flood)
 
 
 @dataclass(frozen=True)
@@ -76,18 +77,32 @@ def _estimate_ram_gb() -> float:
 
 
 def adaptive_workers(file_count: int = 0) -> int:
-    """Choose a safe number of worker threads."""
+    """Choose a safe number of worker threads.
+
+    Heavily biased toward stability on large Downloads folders.
+    More workers rarely improve throughput once disk / antivirus
+    becomes the bottleneck, but they do raise peak RAM.
+    """
     cpus = _cpu_count()
     ram = _estimate_ram_gb()
-    # Base on CPU, then clamp by available RAM and total work
     w = min(MAX_WORKERS_CAP, max(MIN_WORKERS, cpus))
-    if ram < 3.0:
+    # RAM clamps (conservative on low-memory machines)
+    if ram < 2.0:
+        w = min(w, 2)
+    elif ram < 3.5:
         w = min(w, 3)
-    elif ram < 6.0:
-        w = min(w, 6)
-    if file_count > 50_000:
+    elif ram < 5.5:
         w = min(w, 4)
-    elif file_count > 15_000:
+    elif ram < 9.0:
+        w = min(w, 6)
+    # File-count clamps – large Downloads folders
+    if file_count > 40_000:
+        w = min(w, 3)
+    elif file_count > 12_000:
+        w = min(w, 4)
+    elif file_count > 4_000:
+        w = min(w, 5)
+    elif file_count > 1_500:
         w = min(w, 6)
     return max(MIN_WORKERS, w)
 
@@ -152,3 +167,41 @@ def should_deep_archive(size: int) -> bool:
 
 def max_names_for(size: int) -> int:
     return profile_for_size(size).max_names
+
+
+class ProgressThrottle:
+    """Rate-limit progress callbacks so the GUI / CLI never floods.
+
+    Call .maybe(done, total, stage) from worker threads; it is thread-safe
+    and drops intermediate updates when they arrive too fast.
+    """
+    __slots__ = ("_cb", "_interval", "_last_t", "_last_done", "_lock")
+
+    def __init__(self, callback, interval: float = PROGRESS_MIN_INTERVAL):
+        import threading, time
+        self._cb = callback
+        self._interval = max(0.15, float(interval))
+        self._last_t = 0.0
+        self._last_done = -1
+        self._lock = threading.Lock()
+
+    def maybe(self, done: int, total: int, stage: str, force: bool = False):
+        if self._cb is None:
+            return
+        import time
+        now = time.monotonic()
+        with self._lock:
+            if (not force
+                    and done != total
+                    and (now - self._last_t) < self._interval
+                    and (done - self._last_done) < 40):
+                return
+            self._last_t = now
+            self._last_done = done
+        try:
+            self._cb(done, total, stage)
+        except Exception:
+            pass
+
+    def force(self, done: int, total: int, stage: str):
+        self.maybe(done, total, stage, force=True)
