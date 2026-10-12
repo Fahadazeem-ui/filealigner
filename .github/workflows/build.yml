@@ -8,7 +8,39 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install pyinstaller
-      - run: python test_sorter.py
+      - name: Run tests
+        shell: bash
+        run: |
+          set +e
+          python -m unittest -v test_sorter test_gui > test-output.txt 2>&1
+          code=$?
+          {
+            echo "### tests (test_sorter + test_gui) - exit $code"
+            echo '```text'
+            tail -c 7000 test-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+      - name: Run accuracy benchmark
+        shell: bash
+        run: |
+          set +e
+          python benchmark.py --json bench-report.json > bench-output.txt 2>&1
+          code=$?
+          {
+            echo "### benchmark.py - exit $code"
+            echo '```text'
+            tail -c 7000 bench-output.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+      - name: Upload test + benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: test-output, path: "test-output.txt\nbench-output.txt", if-no-files-found: ignore }
       - run: pyinstaller --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
       - uses: actions/upload-artifact@v4
         with: { name: FileSorter-exe, path: dist/FileSorter.exe }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: accuracy-report, path: bench-report.json, if-no-files-found: ignore }

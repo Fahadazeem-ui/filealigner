@@ -18,6 +18,8 @@ class Verdict:
     confidence: float = 0.8
     evidence: list[str] = field(default_factory=list)
     unit: bool = False               # True = a whole folder that must move as ONE thing
+    alternatives: list[tuple[str, float]] = field(default_factory=list)   # other candidates + score
+    collision: str = ""              # set when several content types disagree inside one archive
 
     @property
     def level(self) -> str:
@@ -29,11 +31,14 @@ class Verdict:
 
     def to_json(self) -> dict:
         return {"dest": list(self.dest), "label": self.label, "confidence": self.confidence,
-                "evidence": self.evidence, "unit": self.unit}
+                "evidence": self.evidence, "unit": self.unit,
+                "alternatives": [[d, s] for d, s in self.alternatives], "collision": self.collision}
 
     @staticmethod
     def from_json(d: dict) -> "Verdict":
-        return Verdict(tuple(d["dest"]), d["label"], d["confidence"], list(d.get("evidence", [])), d.get("unit", False))
+        return Verdict(tuple(d["dest"]), d["label"], d["confidence"], list(d.get("evidence", [])),
+                       d.get("unit", False),
+                       [(tuple(a[0]), a[1]) for a in d.get("alternatives", [])], d.get("collision", ""))
 
 
 def review(reason: str, evidence: list[str] | None = None, bucket: str = "Unidentified") -> Verdict:

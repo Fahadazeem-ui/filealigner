@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec
+.file_sorter/
+bench-report*.json

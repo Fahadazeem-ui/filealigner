@@ -5,6 +5,8 @@
   python file_sorter.py PATH --apply          -> really sort
   python file_sorter.py PATH --audit          -> only fix misplaced files inside existing category folders
   python file_sorter.py PATH --explain        -> show why each file goes where it goes
+  python file_sorter.py PATH --online         -> allow a hash-only lookup for unclear items (opt-in)
+  python file_sorter.py --teach PATH DEST     -> remember "things like PATH belong in DEST"
   python file_sorter.py --undo                -> undo the last sort
 """
 from __future__ import annotations
@@ -12,10 +14,12 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import sys
 import threading
 
 import sorter_core as core
+from fsengine import Corrections, Engine, Lookup
 
 
 # ============================================================ CLI
@@ -28,8 +32,27 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("--no-recursive", action="store_true", help="do not look inside sub-folders")
     ap.add_argument("--explain", action="store_true", help="print the evidence for every decision")
     ap.add_argument("--keep-empty", action="store_true", help="do not remove folders left empty")
+    ap.add_argument("--online", action="store_true",
+                    help="opt in: for items the local evidence cannot settle, look up a SHA-1 hash online "
+                         "(never the file, never its name). Works only for public files.")
+    ap.add_argument("--teach", nargs=2, metavar=("PATH", "DEST"),
+                    help="remember that PATH (file or folder) belongs into DEST, e.g. 'Games/Minecraft/Shaders'")
+    ap.add_argument("--forget-teaching", action="store_true", help="delete everything you taught the sorter")
     ap.add_argument("--undo", action="store_true")
     a = ap.parse_args(argv)
+    if a.teach:
+        corr = Corrections()
+        ok = corr.record_path(a.teach[0], tuple(a.teach[1].split("/")), "your correction")
+        print(f"remembered: things shaped like {a.teach[0]} -> {a.teach[1]}" if ok else
+              "could not learn that one: not enough distinctive structure in it (a plain file/folder has no shape)")
+        return 0 if ok else 1
+    if a.forget_teaching:
+        corr = Corrections()
+        n = len(corr.entries)
+        corr.entries = []
+        corr.save()
+        print(f"forgot {n} learned correction(s)")
+        return 0
     if a.undo:
         n, failed = core.undo()
         print(f"restored {n} item(s)")
@@ -43,8 +66,12 @@ def cli(argv: list[str]) -> int:
     def prog(done, total, stage):
         if total:
             print(f"\r{stage}: {done}/{total}", end="", file=sys.stderr)
+    eng = Engine(online=Lookup(enabled=a.online))
+    if a.online:
+        print("online lookup: on for this run (only SHA-1 hashes are sent, only for unclear items)", file=sys.stderr)
     try:
-        res = core.scan(a.path, a.dest, recursive=not a.no_recursive, mode="audit" if a.audit else "sort", progress=prog)
+        res = core.scan(a.path, a.dest, recursive=not a.no_recursive, mode="audit" if a.audit else "sort",
+                        progress=prog, engine=eng)
     except ValueError as exc:
         print("error:", exc)
         return 2
@@ -57,6 +84,9 @@ def cli(argv: list[str]) -> int:
         for it in items[: (len(items) if a.explain else 6)]:
             tag = "[unit] " if it.is_dir else ""
             print(f"   {tag}{it.name}  <{it.verdict.level}> {it.verdict.label}")
+            if it.verdict.alternatives:
+                alt = ", ".join(f"{'/'.join(d)} ({s:.1f})" for d, s in it.verdict.alternatives)
+                print(f"        also considered: {alt}")
             if a.explain:
                 for e in it.verdict.evidence:
                     print(f"        - {e}")
@@ -90,6 +120,7 @@ def gui():
 
     scope_v, dest_v = tk.StringVar(), tk.StringVar()
     rec_v, empty_v, review_v = tk.BooleanVar(value=True), tk.BooleanVar(value=True), tk.BooleanVar(value=False)
+    online_v = tk.BooleanVar(value=bool(Lookup.config().get("online_lookup")))
     mode_v = tk.StringVar(value="sort")
 
     top = ttk.Frame(root, padding=8)
@@ -108,6 +139,8 @@ def gui():
     ttk.Radiobutton(opts, text="Audit only (fix misplaced files in existing category folders)", variable=mode_v, value="audit").pack(side="left", padx=10)
     ttk.Checkbutton(opts, text="Look inside sub-folders", variable=rec_v).pack(side="left", padx=10)
     ttk.Checkbutton(opts, text="Remove folders left empty", variable=empty_v).pack(side="left")
+    ttk.Checkbutton(opts, text="Online lookup (SHA-1 hash only, opt-in)",
+                    variable=online_v).pack(side="left", padx=10)
 
     bar = ttk.Frame(root, padding=8)
     bar.pack(fill="x")
@@ -115,7 +148,8 @@ def gui():
     b_sort = ttk.Button(bar, text="2. Sort selected", state="disabled")
     b_undo = ttk.Button(bar, text="Undo last sort")
     b_cancel = ttk.Button(bar, text="Cancel", state="disabled")
-    for b in (b_prev, b_sort, b_undo, b_cancel):
+    b_teach = ttk.Button(bar, text="Teach: file this elsewhere")
+    for b in (b_prev, b_sort, b_undo, b_cancel, b_teach):
         b.pack(side="left", padx=3)
     ttk.Checkbutton(bar, text="Show only Unsure / Review", variable=review_v, command=lambda: render()).pack(side="left", padx=14)
     prog = ttk.Progressbar(bar, length=220)
@@ -212,9 +246,11 @@ def gui():
         if iid.startswith("i:") and its:
             it = its[0]
             v = it.verdict
+            alt = ("\n\nAlso considered:\n" + "\n".join(f" \u2022 {'/'.join(d)} (score {s:.1f})" for d, s in v.alternatives)
+                   if v.alternatives else "")
             set_detail(f"{it.source}\n\u2192 {os.path.join(state['res'].dest_root, *v.dest)}\n\n{v.label}   [{v.level}, {v.confidence:.0%}]"
                        + ("   (whole folder moves as ONE unit)" if it.is_dir else "")
-                       + "\n\nWhy:\n" + "\n".join(f" \u2022 {e}" for e in v.evidence))
+                       + "\n\nWhy:\n" + "\n".join(f" \u2022 {e}" for e in v.evidence) + alt)
         elif its:
             set_detail(f"{base.get(iid, '')}: {len(its)} item(s), {core.human(sum(i.size for i in its))}")
 
@@ -242,8 +278,9 @@ def gui():
 
         def work():
             try:
+                eng = Engine(online=Lookup(enabled=bool(online_v.get())))
                 res = core.scan(scope_v.get(), dest_v.get() or None, recursive=rec_v.get(), mode=mode_v.get(),
-                                progress=lambda d, t, s: q.put(("p", d, t, s)), cancel=ev)
+                                progress=lambda d, t, s: q.put(("p", d, t, s)), cancel=ev, engine=eng)
                 q.put(("done", res))
             except Exception as exc:  # noqa: BLE001
                 q.put(("err", str(exc)))
@@ -265,6 +302,36 @@ def gui():
         if out.failed:
             msg += "\n\nFailed:\n" + "\n".join(f"{os.path.basename(p)}: {w}" for p, w in out.failed[:15])
         messagebox.showinfo("FileSorter", msg)
+
+    def do_teach():
+        iid = tree.focus()
+        its = members.get(iid, [])
+        if not its:
+            messagebox.showinfo("FileSorter", "Select an item first.")
+            return
+        it = its[0]
+        current = "/".join(it.verdict.dest)
+        dlg = tk.Toplevel(root)
+        dlg.title("Teach the sorter")
+        dlg.transient(root)
+        ttk.Label(dlg, text=f"Where should things like\n{it.name}\nreally go?\n\n"
+                            f"(a path such as Games/Minecraft/Shaders)", justify="left").pack(padx=12, pady=10)
+        entry = ttk.Entry(dlg, width=52)
+        entry.insert(0, current)
+        entry.pack(padx=12)
+        def save():
+            # keep the user's typing, minus characters that would break a path on Windows
+            parts = (re.sub(r'[<>:"|?*\r\n\t]', "", x).strip() for x in entry.get().split("/"))
+            dest = tuple(p for p in parts if p)
+            dlg.destroy()
+            if len(dest) < 1:
+                return
+            if Corrections().record_path(it.source, dest, "your correction"):
+                status.set(f"learned: items shaped like {it.name} -> {'/'.join(dest)}")
+            else:
+                messagebox.showinfo("FileSorter", "That item has no distinctive shape to learn from "
+                                                  "(use a folder or an archive with structure inside it).")
+        ttk.Button(dlg, text="Remember", command=save).pack(pady=10)
 
     def do_undo():
         if not core.latest_journal():
@@ -303,6 +370,7 @@ def gui():
             pass
         root.after(100, poll)
 
+    b_teach.configure(command=do_teach)
     b_prev.configure(command=do_preview)
     b_sort.configure(command=do_sort)
     b_undo.configure(command=do_undo)

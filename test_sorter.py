@@ -8,6 +8,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixtures_builder as fx
+import fsengine.learn as learn
+import fsengine.lookup as lookup
 import sorter_core as core
 from fsengine import Engine
 
@@ -18,6 +20,11 @@ class Base(unittest.TestCase):
         t = Path(self.tmp.name)
         core.UNDO_DIR = t / "undo"
         core.CACHE_PATH = t / "cache.json"
+        # never read the user's own rules while testing: their learned corrections or an enabled
+        # online-lookup config would change results (and could fire real network calls)
+        learn.CORR_PATH = str(t / "corrections.json")
+        lookup.CONFIG_PATH = str(t / "no-config.json")
+        lookup.CACHE_PATH = str(t / "hashcache.json")
         self.root = t / "Downloads"
         self.root.mkdir()
 
@@ -240,6 +247,28 @@ class TestEngineDetails(Base):
         self.assertEqual(self.v("Show.S01E02.720p.mp4", fx.mp4(1280, 720, 2700)).path, "Videos/TV Shows & Anime")
         self.assertEqual(self.v("clip.mp4", fx.mp4(1080, 1920, 15)).path, "Videos/Shorts & Vertical")
 
+    def test_a_test_run_never_reads_your_own_folder_config(self):
+        """Tests (and a scan that was not told otherwise) must not pick up ~/.file_sorter config."""
+        home = os.path.expanduser("~")
+        self.assertFalse(learn.CORR_PATH.startswith(home), "tests would read your real corrections")
+        self.assertFalse(lookup.CONFIG_PATH.startswith(home), "tests would read your real config")
+        self.assertFalse(lookup.CACHE_PATH.startswith(home), "tests would write your real hash cache")
+
+    def test_online_lookup_follows_the_config_and_defaults_to_off(self):
+        import fsengine.lookup as lookup_mod
+        self.assertFalse(lookup_mod.Lookup.auto().enabled, "the default must be offline")
+        cfg = Path(self.tmp.name) / "config.json"
+        cfg.write_text(json.dumps({"online_lookup": True, "providers": ["modrinth"], "timeout": 2}))
+        old, lookup_mod.CONFIG_PATH = lookup_mod.CONFIG_PATH, str(cfg)
+        try:
+            auto = lookup_mod.Lookup.auto()
+            self.assertTrue(auto.enabled)
+            self.assertEqual(auto.providers, ("modrinth",))
+            self.assertEqual(auto.timeout, 2.0)
+        finally:
+            lookup_mod.CONFIG_PATH = old
+        self.assertFalse(lookup_mod.Lookup.auto().enabled)
+
     def test_user_rules_override(self):
         rules = Path(self.tmp.name) / "rules.json"
         rules.write_text(json.dumps({"extensions": {".foo": ["Games", "Foo"]}}))
@@ -275,8 +304,406 @@ class TestScale(Base):
         core.scan(str(self.root))
         second = time.time() - t
         self.assertEqual(len(r1.items), 3000)
-        self.assertLess(first, 20)
+        # a pathological scan (e.g. opening every container twice, or leaking handles) blows far
+        # past this; a Windows CI runner with real-time antivirus legitimately takes longer than Linux
+        self.assertLess(first, 60)
         self.assertLessEqual(second, first)
+        self.assertLess(second, 30)
+
+
+class TestRealWorldCases(Base):
+    """The zips that went to the wrong folder: a repo, an exe zip, shaders, resource packs, mods."""
+
+    def setUp(self):
+        super().setUp()
+        self.e = Engine()
+
+    def test_repo_zip_is_a_project_not_an_archive(self):
+        """FileSorter.zip: README + package-less python sources + .github -> Development/Projects/Python."""
+        import bench.corpus as corpus
+        p = self.put("FileSorter.zip", corpus.zbytes({
+            "FileSorter/README.md": "# FileSorter", "FileSorter/sorter.py": "import os",
+            "FileSorter/fsengine/classify.py": "x=1", "FileSorter/fsengine/rules.py": "x=2",
+            "FileSorter/test_sorter.py": "def t(): pass", "FileSorter/run.bat": "python file_sorter.py",
+            "FileSorter/.github/workflows/build.yml": "name: build"}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Development/Projects/Python")
+
+    def test_exe_only_zip_is_software_not_archives(self):
+        import bench.corpus as corpus
+        p = self.put("FileSorter-exe.zip", corpus.zbytes({"FileSorter.exe": corpus.exe(product="FileSorter")}))
+        v = self.e.classify_file(str(p))
+        self.assertEqual(v.path, "Software/Programs")
+        self.assertTrue(any("single" in e or "wraps" in e for e in v.evidence), v.evidence)
+
+    def test_shader_pack_with_pack_mcmeta_is_a_shader_pack(self):
+        import bench.corpus as corpus
+        files = {"pack.mcmeta": '{"pack":{"pack_format":8}}'}
+        files.update({f"shaders/{n}.fsh": "void main(){}" for n in
+                      ("final", "composite", "composite1", "gbuffers_basic", "gbuffers_terrain", "shadow")})
+        files["shaders/shaders.properties"] = "shadowMapResolution=2048\n"
+        p = self.put("BSL_Shaders_v8.zip", corpus.zbytes(files))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Games/Minecraft/Shaders")
+
+    def test_resource_pack_with_core_shaders_is_a_resource_pack(self):
+        """assets/*/shaders/ is a resource pack (core shaders) - not a shader pack."""
+        import bench.corpus as corpus
+        p = self.put("FaithfulCore.zip", corpus.zbytes({
+            "pack.mcmeta": '{"pack":{"pack_format":22}}',
+            "assets/minecraft/shaders/core/rendertype_solid.fsh": "void main(){}",
+            "assets/minecraft/shaders/include/fog.glsl": "float f(){}",
+            "assets/minecraft/textures/block/stone.png": fx.png(16, 16)}))
+        v = self.e.classify_file(str(p))
+        self.assertEqual(v.path, "Games/Minecraft/Resourcepacks")
+        self.assertTrue(any("resource pack" in e for e in v.evidence), v.evidence)
+
+    def test_obfuscated_mod_without_descriptor_is_found_by_bytecode(self):
+        import bench.corpus as corpus
+        p = self.put("mystery.jar", corpus.zbytes({"a/b/c.class": corpus.cls("net/minecraftforge/fml/common/Mod")}))
+        v = self.e.classify_file(str(p))
+        self.assertEqual(v.path, "Games/Minecraft/Mods/Forge")
+        self.assertTrue(any("bytecode" in e for e in v.evidence), v.evidence)
+
+    def test_multi_loader_jar_is_not_filed_as_one_loader(self):
+        import bench.corpus as corpus
+        p = self.put("multi.jar", corpus.zbytes({"fabric.mod.json": '{"id":"m"}', "META-INF/mods.toml": 'modId="m"\n'}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Games/Minecraft/Mods/Multi-loader")
+
+    def test_disabled_and_renamed_jars_are_still_read(self):
+        import bench.corpus as corpus
+        for name in ("sodium.jar.disabled", "sodium.jar.old", "sodium.jar.bak"):
+            p = self.put(name, corpus.zbytes({"fabric.mod.json": '{"id":"sodium"}'}))
+            v = self.e.classify_file(str(p))
+            self.assertEqual(v.path, "Games/Minecraft/Mods/Fabric", name)
+            self.assertTrue(any(".disabled" in e or ".old" in e or ".bak" in e for e in v.evidence), v.evidence)
+
+    def test_zip_of_photos_is_not_an_archive(self):
+        import bench.corpus as corpus
+        p = self.put("holiday.zip", corpus.zbytes({f"p{i}.jpg": fx.jpeg_plain(640, 480) for i in range(6)}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Images/Zipped Collections")
+
+    def test_zip_of_mixed_things_stays_an_archive(self):
+        import bench.corpus as corpus
+        p = self.put("mixed.zip", corpus.zbytes({"a.pdf": fx.pdf_text("hello"), "b.png": fx.png(4, 4),
+                                                 "c.mp3": fx.mp3_tagged("t", "a"), "d.exe": corpus.exe(product="X")}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Archives/Mixed Contents")
+
+    def test_bot_zip_with_src_layout_is_a_bot(self):
+        import bench.corpus as corpus
+        p = self.put("repo-main.zip", corpus.zbytes({
+            "repo-main/package.json": '{"dependencies":{"discord.js":"14"}}',
+            "repo-main/src/bot/index.js": "const {Client}=require('discord.js');\nclient.login(process.env.TOKEN);",
+            "repo-main/src/bot/commands/ping.js": "module.exports={}", "repo-main/.env": "DISCORD_TOKEN=x"}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Development/Discord Bots")
+
+    def test_leaked_bot_token_is_warned_about(self):
+        import bench.corpus as corpus
+        token = "M" + "z" * 23 + ".abcdef.ghiJKLmnopQRStuvWX1234567890"
+        p = self.put("bot.zip", corpus.zbytes({"bot.py": "import discord\nbot.run(TOKEN)",
+                                              ".env": f"DISCORD_TOKEN={token}"}))
+        v = self.e.classify_file(str(p))
+        self.assertTrue(any("token" in e.lower() for e in v.evidence), v.evidence)
+
+    def test_installer_and_portable_app_zips(self):
+        import bench.corpus as corpus
+        inst = self.put("Setup.zip", corpus.zbytes({"CoolSetup.exe": corpus.exe(product="Cool", markers=("Nullsoft",))}))
+        self.assertEqual(self.e.classify_file(str(inst)).path, "Software/Installers")
+        port = self.put("Portable.zip", corpus.zbytes({"t.exe": corpus.exe(product="T"),
+                                                       **{f"l{i}.dll": b"MZ" + b"\x00" * 40 for i in range(4)}}))
+        self.assertEqual(self.e.classify_file(str(port)).path, "Software/Portable Apps & Installed Programs")
+
+    def test_nested_mod_in_a_zip_keeps_its_loader(self):
+        import bench.corpus as corpus
+        p = self.put("nested.zip", corpus.zbytes({"inner.jar": corpus.zbytes({"fabric.mod.json": '{"id":"x"}'})}))
+        self.assertEqual(self.e.classify_file(str(p)).path, "Games/Minecraft/Mods/Fabric")
+
+    def test_engine_never_reads_more_than_it_has_to(self):
+        """Tiering: a settled item must not trigger the expensive probes."""
+        import bench.corpus as corpus
+        from fsengine import probes
+        calls = {"n": 0}
+        real = probes.bytecode_markers
+        probes.bytecode_markers = lambda *a, **k: (calls.__setitem__("n", calls["n"] + 1), real(*a, **k))[1]
+        try:
+            e = Engine()
+            p = self.put("sodium.jar", corpus.zbytes({"fabric.mod.json": '{"id":"sodium"}'}))
+            e.classify_file(str(p))
+            self.assertEqual(calls["n"], 0, "bytecode probe ran even though the descriptor settled it")
+            q = self.put("mystery2.jar", corpus.zbytes({"a.class": corpus.cls("net/fabricmc/api/ModInitializer")}))
+            e.classify_file(str(q))
+            self.assertGreaterEqual(calls["n"], 1)
+        finally:
+            probes.bytecode_markers = real
+
+
+class TestLearningAndLookup(Base):
+    def setUp(self):
+        super().setUp()
+        self.e = Engine()
+
+    def test_correction_is_remembered_and_applied(self):
+        import bench.corpus as corpus
+        from fsengine import Corrections
+        corr = Corrections(path=str(Path(self.tmp.name) / "corr.json"))
+        e = Engine(corrections=corr)
+        files = {"bot.py": "import discord\nbot.run(TOKEN)", "cogs/a.py": "import discord",
+                 ".env": "TOKEN=abc", "requirements.txt": "discord.py"}
+        p = self.put("mybot.zip", corpus.zbytes(files))
+        learned = corr.record_path(str(p), ("Development", "My Bots"), "test")
+        self.assertTrue(learned)
+        again = self.put("another-bot.zip", corpus.zbytes(files))
+        v = e.classify_file(str(again))
+        self.assertEqual(v.path, "Development/My Bots")
+        self.assertTrue(any("filed" in x for x in v.evidence), v.evidence)
+
+    def test_correction_does_not_leak_to_unrelated_files(self):
+        import bench.corpus as corpus
+        from fsengine import Corrections
+        corr = Corrections(path=str(Path(self.tmp.name) / "corr.json"))
+        e = Engine(corrections=corr)
+        corr.record_path(str(self.put("bot.zip", corpus.zbytes({"bot.py": "import discord", "cogs/a.py": "x",
+                                                                ".env": "t=1", "requirements.txt": "discord.py"}))),
+                         ("Development", "My Bots"))
+        v = e.classify_file(str(self.put("pack.zip", corpus.zbytes({"pack.mcmeta": "{}", "assets/minecraft/lang/en_us.json": "{}"}))))
+        self.assertEqual(v.path, "Games/Minecraft/Resourcepacks")
+
+    def test_online_lookup_is_off_by_default_and_only_sends_hashes(self):
+        import bench.corpus as corpus
+        from fsengine import Lookup
+        sent = []
+
+        def fake_fetch(url, data=None):
+            sent.append((url, data))
+            if "version_files" in url:
+                return {"abc": {"project_id": "P1", "name": "BSL", "loaders": ["iris"]}}
+            return {"project_type": "shader", "title": "BSL Shaders"}
+
+        files = {f"shaders/x{i}.fsh": "void main(){}" for i in range(3)}
+        files["shaders/readme.txt"] = "notes " * 400
+        p = self.put("mystery_shader.zip", corpus.zbytes(files))
+        off = Lookup(enabled=False, fetch=fake_fetch, cache_path=str(Path(self.tmp.name) / "hc.json"))
+        Engine(online=off).classify_file(str(p))
+        self.assertEqual(sent, [], "lookup ran while disabled")
+
+        on = Lookup(enabled=True, fetch=fake_fetch, cache_path=str(Path(self.tmp.name) / "hc.json"))
+        v = Engine(online=on).classify_file(str(p))
+        self.assertTrue(sent, "lookup did not run")
+        for url, data in sent:
+            body = (data or b"").decode() if isinstance(data, (bytes, bytearray)) else ""
+            self.assertNotIn("shaders", body, "the file name/listing must never be sent")
+        self.assertEqual(v.path, "Games/Minecraft/Shaders")
+        self.assertTrue(any("hash" in e for e in v.evidence), v.evidence)
+
+    def test_review_verdicts_explain_themselves(self):
+        p = self.put("mystery.xyz", bytes(range(256)) * 4)
+        v = self.e.classify_file(str(p))
+        self.assertEqual(v.dest[0], "Review")
+        self.assertTrue(v.evidence)
+
+
+class TestCorpusRoundTrip(Base):
+    """The whole pipeline on 120+ labelled items at once: sort, then re-scan must find nothing to do."""
+
+    def test_sort_120_items_then_rescan_is_idle(self):
+        import bench.corpus as corpus
+        for case in corpus.CASES:
+            corpus.build_case(case, str(self.root))
+        # extra junk that must not break anything
+        self.put("empty-file.txt", b"")
+        self.put("half-download.crdownload", b"PK\x03\x04")
+        self.put("desktop.ini", b"[.ShellClassInfo]")
+        self.put("~$draft.docx", b"PK\x03\x04")
+        self.put("New folder/with/deep/stuff.txt", b"hello")
+        t0 = time.time()
+        res = core.scan(str(self.root))
+        scan_seconds = time.time() - t0
+        self.assertGreaterEqual(len(res.items), 110)
+        self.assertLess(scan_seconds, 60, "scan got slow")
+        out = core.execute(res)
+        self.assertFalse(out.failed, out.failed[:5])
+        again = core.scan(str(self.root))
+        stray = [i.name for i in again.items]
+        self.assertEqual(stray, [], f"second scan still wants to move {stray[:10]}")
+
+
+class TestFileHandles(Base):
+    """Windows refuses to rename/move a file that still has an open handle (WinError 32).
+
+    Linux happily moves open files, so a leaked handle is invisible here - these tests emulate the
+    Windows rule.  `_open_files()` reads /proc and finds every file this process still holds open
+    (any leak: zip, tar, media, pdf ...), and `_strict_move()` makes shutil.move behave like
+    Windows.
+    """
+
+    def setUp(self):
+        super().setUp()
+        core.MOVE_RETRY_DELAY = 0.01        # keep the retry tests fast
+        self.addCleanup(setattr, core, "MOVE_RETRY_DELAY", 0.3)
+
+    def _open_files(self) -> set[str]:
+        out = set()
+        try:
+            fds = os.listdir("/proc/self/fd")
+        except OSError:
+            return out
+        for fd in fds:
+            try:
+                target = os.readlink(f"/proc/self/fd/{fd}")
+            except OSError:
+                continue
+            if target.startswith("/"):
+                out.add(os.path.abspath(target))
+        return out
+
+    def _assert_nothing_open_below(self, root: str):
+        root = os.path.abspath(root) + os.sep
+        leaked = sorted(p for p in self._open_files() if p.startswith(root))
+        self.assertEqual(leaked, [], f"files still open after the scan: {leaked}")
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux) to inspect open files")
+    def test_scan_leaves_no_open_handles_at_all(self):
+        import gc
+        gc.disable()      # refcounting must be enough: no reference cycle may hold a handle open
+        try:
+            fx.build(self.root)
+            core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+            res = core.scan(str(self.root))          # and after a full sort too
+            core.execute(res)
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
+
+    def _record_zip_openings(self):
+        import fsengine.listing as listing
+        opened = []
+        real = listing.zipfile.ZipFile
+
+        class Recorder(real):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k)
+                opened.append(self)
+
+        listing.zipfile.ZipFile = Recorder
+        self.addCleanup(setattr, listing.zipfile, "ZipFile", real)
+        return opened
+
+    def test_every_archive_opened_is_closed_again(self):
+        opened = self._record_zip_openings()
+        self.put("mod.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        self.put("lib.jar", fx.lib_jar("org.x", "x", "1.0"))
+        self.put("pack.zip", fx.zipbytes({"pack.mcmeta": '{"pack":{"pack_format":15}}',
+                                          "assets/minecraft/lang/en_us.json": "{}"}))
+        for name in ("mod.zip", "lib.jar", "pack.zip"):
+            Engine().classify_file(str(self.root / name))
+        self.assertTrue(opened, "nothing was opened - the test is not testing anything")
+        leaks = [z.filename for z in opened if z.fp is not None]
+        self.assertEqual(leaks, [], f"archives left open: {leaks}")
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
+    def test_nested_archives_do_not_keep_their_outer_archive_open(self):
+        """zip-in-zip / modpack-in-zip: the context graph must not end up in a cycle."""
+        import gc
+        self.put("modpack.zip", fx.zipbytes({
+            "mods/sodium.jar": fx.zipbytes({"fabric.mod.json": '{"id": "sodium"}'}),
+            "mods/jei.jar": fx.zipbytes({"META-INF/mods.toml": 'modId="jei"\n'}),
+            "config/x.toml": "a=1", "options.txt": "version:1.20.1"}))
+        gc.disable()
+        try:
+            res = core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
+        self.assertEqual(res.items[0].category, "Games/Minecraft/Modpacks")
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
+    def test_sorting_survives_an_os_that_forbids_moving_open_files(self):
+        real_move = core.shutil.move
+
+        def strict_move(src, dst):
+            if os.path.exists(src) and os.path.abspath(src) in self._open_files():
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
+            return real_move(src, dst)
+
+        core.shutil.move = strict_move
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        fx.build(self.root)
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertTrue(out.moved, "nothing moved at all")
+        self.assertEqual(out.failed, [])
+        self.assertGreater(len([1 for a, _ in out.moved if a.lower().endswith((".zip", ".jar"))]), 5)
+
+    @unittest.skipIf(not os.path.isdir("/proc/self/fd"), "needs /proc (Linux)")
+    def test_sorting_after_a_deep_corpus_scan_leaves_handles_closed(self):
+        """The whole labelled corpus: open nothing, so every item can be moved on Windows."""
+        import gc
+        import bench.corpus as corpus
+        for case in corpus.CASES:
+            corpus.build_case(case, str(self.root))
+        gc.disable()                 # 4 corpus items are archives inside archives
+        try:
+            res = core.scan(str(self.root))
+            self._assert_nothing_open_below(self.root)
+        finally:
+            gc.enable()
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: (_ for _ in ()).throw(PermissionError(32, "in use", src)) \
+            if os.path.abspath(src) in self._open_files() else real_move(src, dst)
+        try:
+            out = core.execute(res)
+        finally:
+            core.shutil.move = real_move
+        self.assertEqual(out.failed, [])
+        self.assertGreater(len(out.moved), 110)
+
+    def test_a_transient_windows_lock_does_not_fail_the_sort(self):
+        """Antivirus / Explorer can hold a file for a moment: retry instead of reporting an error."""
+        real_move = core.shutil.move
+        state = {"calls": 0, "target": ""}
+
+        def flaky_move(src, dst):
+            if os.path.basename(src) == state["target"] and state["calls"] < 2:
+                state["calls"] += 1
+                raise PermissionError(32, "The process cannot access the file because it is being used by another process", src)
+            return real_move(src, dst)
+
+        core.shutil.move = flaky_move
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        state["target"] = "mod.zip"
+        self.put("mod.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        self.put("photo.jpg", fx.jpeg_plain(100, 100))
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertEqual(state["calls"], 2, "the lock was never simulated")
+        self.assertEqual(out.failed, [])
+        self.assertEqual(len(out.moved), 2)
+
+    def test_a_permanent_lock_is_reported_not_hidden(self):
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: (_ for _ in ()).throw(
+            PermissionError(32, "The process cannot access the file because it is being used by another process", src))
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        self.put("locked.zip", fx.zipbytes({"fabric.mod.json": '{"id": "m"}'}))
+        res = core.scan(str(self.root))
+        out = core.execute(res)
+        self.assertEqual(len(out.failed), 1)
+        self.assertIn("being used by another process", out.failed[0][1])
+        self.assertTrue((self.root / "locked.zip").exists(), "a failed move must leave the file alone")
+
+    def test_unit_folders_do_not_hold_their_contents_open(self):
+        """A folder unit is read while listing it; the handle must be gone before it moves."""
+        self.put("MyPack/pack.mcmeta", '{"pack":{"pack_format":9}}')
+        self.put("MyPack/data/ns/functions/f.mcfunction", "say hi")
+        self.put("MyPack/readme.txt", "hello")
+        opened = self._record_zip_openings()
+        real_move = core.shutil.move
+        core.shutil.move = lambda src, dst: real_move(src, dst) if all(z.fp is None for z in opened) \
+            else (_ for _ in ()).throw(PermissionError(32, "in use", src))
+        self.addCleanup(setattr, core.shutil, "move", real_move)
+        res = core.scan(str(self.root))
+        self.assertEqual(res.items[0].category, "Games/Minecraft/Datapacks")
+        out = core.execute(res)
+        self.assertEqual(out.failed, [])
 
 
 if __name__ == "__main__":
