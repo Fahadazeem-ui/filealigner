@@ -1,10 +1,11 @@
 """FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/.
 
-Performance (3.1):
+Performance (3.1 + 4.1):
 - Adaptive worker count from fsengine.perf
-- Progress throttling on huge listings
+- Progress throttling (time-based) on huge listings – prevents UI freeze at ~1200 files
 - MemoryError / OSError fallbacks so a single bad file never kills the whole scan
 - Cache still used; entry count and size are bounded
+- Smaller classification batches under load
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ from pathlib import Path
 
 from fsengine import ENGINE_VERSION, Engine
 from fsengine.model import Verdict
-from fsengine.perf import adaptive_workers
+from fsengine.perf import adaptive_workers, ProgressThrottle
 from fsengine.rules import HOME_DIR, RESPECT_SUBFOLDERS, TOP_LEVEL_DOMAINS, taxonomy_names
 
 UNDO_DIR = Path(HOME_DIR) / "undo"
@@ -130,10 +131,8 @@ def _load_cache() -> dict:
 def _save_cache(cache: dict):
     try:
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        # hard bound: never keep more than 200 k entries
         if len(cache) > 300000:
             cache = dict(list(cache.items())[-200000:])
-        # also drop any absurdly large individual entries
         clean = {k: v for k, v in cache.items() if len(json.dumps(v, separators=(",", ":"))) < 8000}
         CACHE_PATH.write_text(json.dumps({"tag": _cache_tag(), "v": clean}, separators=(",", ":")), encoding="utf-8")
     except (OSError, MemoryError):
@@ -150,7 +149,6 @@ def target_dir(dest_root: str, v: Verdict) -> str:
 
 
 def in_place(source: str, v: Verdict, dest_root: str) -> bool:
-    """Already where it belongs? Respects the user's own sub-folders inside a correct category."""
     parent = _norm(os.path.dirname(source))
     tdir = _norm(target_dir(dest_root, v))
     if parent == tdir or parent.startswith(tdir + os.sep):
@@ -165,7 +163,6 @@ _TAX = taxonomy_names()
 
 
 def _is_taxonomy_dir(path: str, dest_root: str) -> bool:
-    """Our own category folders (Games/Minecraft/Mods ...) are never 'units'."""
     rel = os.path.relpath(_norm(path), _norm(dest_root))
     if rel.startswith(".."):
         return False
@@ -235,7 +232,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                     continue
                 files.append((e.path, st.st_size, st.st_mtime_ns))
         list_count += 1
-        if progress and list_count % 200 == 0:
+        if progress and list_count % 150 == 0:
             progress(len(files), 0, "listing files")
 
     cache = _load_cache() if use_cache else {}
@@ -255,6 +252,9 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     done = [total - len(todo)]
     lock = threading.Lock()
     workers = workers if workers is not None else adaptive_workers(total)
+    throttle = ProgressThrottle(progress, interval=0.40)
+    if progress and done[0]:
+        throttle.force(done[0], total, "analysing contents")
 
     def work(args):
         p, size, key = args
@@ -263,7 +263,6 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         try:
             v = eng.classify_file(p, size)
         except MemoryError:
-            # Fall back to a minimal safe verdict so the scan continues
             from fsengine.model import review
             v = review("Out of memory while analysing", [f"size={size}"], "Unreadable")
         except Exception as exc:  # noqa: BLE001
@@ -271,13 +270,11 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
             v = review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
         with lock:
             done[0] += 1
-            if progress and done[0] % max(25, total // 200 or 25) == 0:
-                progress(done[0], total, "analysing contents")
+            throttle.maybe(done[0], total, "analysing contents")
         return p, v, key
 
     if todo and not cancelled():
-        # Submit in moderate-sized batches so the future list itself does not explode RAM
-        batch_size = 2000
+        batch_size = 800 if total > 1500 else 1500
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
             for i in range(0, len(todo), batch_size):
                 if cancelled():
@@ -295,15 +292,18 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                             cache[key] = v.to_json()
                         except Exception:
                             pass
+                if total > 2000:
+                    time.sleep(0.02)
 
     if use_cache:
         _save_cache(cache)
+    throttle.force(total, total, "analysing contents")
 
     ents = [(os.path.dirname(p), os.path.basename(p), v) for p, v in results.items()]
     try:
         eng.context_pass(ents)
     except Exception:
-        pass  # batch context is a nice-to-have; never fail the scan for it
+        pass
 
     sizes = {p: s for p, s, _ in files}
     candidates = [Item(p, False, sizes[p], v) for p, v in results.items()] + units
