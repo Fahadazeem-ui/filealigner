@@ -23,9 +23,9 @@ MAX_PDF_READ       = 2_000_000
 MAX_OFFICE_READ    = 300_000
 MAX_TEXT_READ      = 80_000
 MAX_MOOV_SIZE      = 32 * 1024 * 1024     # 32 MB
-MAX_WORKERS_CAP    = 8          # lowered: more workers rarely help and raise memory pressure
+MAX_WORKERS_CAP    = 4          # hard cap – Downloads + AV hate high concurrency
 MIN_WORKERS        = 2
-PROGRESS_MIN_INTERVAL = 0.35    # seconds between progress callbacks (prevents UI/queue flood)
+PROGRESS_MIN_INTERVAL = 0.50    # slower updates keep GUI responsive under load
 
 
 @dataclass(frozen=True)
@@ -93,17 +93,15 @@ def adaptive_workers(file_count: int = 0) -> int:
         w = min(w, 3)
     elif ram < 5.5:
         w = min(w, 4)
-    elif ram < 9.0:
-        w = min(w, 6)
-    # File-count clamps – large Downloads folders
-    if file_count > 40_000:
+    # File-count clamps – Downloads folders are the danger zone
+    # (AV + mixed zips). Keep concurrency very low so one slow file
+    # cannot make the GUI go "Not Responding".
+    if file_count > 8_000:
+        w = min(w, 2)
+    elif file_count > 2_000:
+        w = min(w, 2)
+    elif file_count > 800:
         w = min(w, 3)
-    elif file_count > 12_000:
-        w = min(w, 4)
-    elif file_count > 4_000:
-        w = min(w, 5)
-    elif file_count > 1_500:
-        w = min(w, 6)
     return max(MIN_WORKERS, w)
 
 
