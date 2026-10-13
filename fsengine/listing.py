@@ -2,10 +2,11 @@
 and work the same on `mod.jar`, `mod.tar.gz` and an already-unzipped `mod/` folder.
 Nothing is ever extracted to disk: we read the table of contents and a few small files in RAM.
 
-Performance notes (FileSorter 3.1):
+Performance notes (FileSorter 3.1 + 4.2.1):
 - Name lists are hard-capped (see fsengine.perf) so a 100k-entry archive cannot explode RAM.
 - Tar is only opened when the whole file is under a safe size.
 - Zip central-directory reads stay streaming; we never load the whole archive.
+- 4.2.1: Zip open is wrapped so a pathological/AV-locked zip fails fast instead of hanging.
 """
 from __future__ import annotations
 
@@ -101,9 +102,22 @@ class Listing:
 
 class ZipListing(Listing):
     def __init__(self, path: str, max_names: int | None = None):
-        self._zf = zipfile.ZipFile(path)
+        # Opening the central directory is the most common hang point on
+        # Downloads (AV + large/corrupt zips). Fail fast and let the
+        # caller fall back to extension-only classification.
+        try:
+            self._zf = zipfile.ZipFile(path)
+        except Exception:
+            raise
         limit = max_names if max_names is not None else MAX_ZIP_NAMES
-        infos = self._zf.infolist()[:limit]
+        try:
+            infos = self._zf.infolist()[:limit]
+        except Exception:
+            try:
+                self._zf.close()
+            except Exception:
+                pass
+            raise
         self._sizes = {i.filename: i.file_size for i in infos}
         super().__init__([i.filename for i in infos if not i.is_dir()])
 
