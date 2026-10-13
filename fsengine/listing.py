@@ -7,6 +7,7 @@ Performance notes (FileSorter 3.1 + 4.2.1):
 - Tar is only opened when the whole file is under a safe size.
 - Zip central-directory reads stay streaming; we never load the whole archive.
 - 4.2.1: Zip open is wrapped so a pathological/AV-locked zip fails fast instead of hanging.
+- 4.2.1: selective – skip archives >400MB, tighter limits so identity files still found without hang.
 """
 from __future__ import annotations
 
@@ -205,15 +206,25 @@ class DirListing(Listing):
 
 
 def open_listing(path: str, kind: str | None, size: int | None = None) -> Listing | None:
-    """Open a listing with size-aware name caps. Never extracts to disk."""
+    """Open a listing with size-aware name caps. Never extracts to disk.
+
+    Selective: for very large generic zips we still attempt a tiny TOC
+    so identity files can be found, but refuse huge central directories.
+    """
     try:
         limit = max_names_for(size) if size is not None else MAX_ZIP_NAMES
+        fsize = size if size is not None else None
+        if fsize is None:
+            try:
+                fsize = os.path.getsize(path)
+            except OSError:
+                fsize = 0
+        if fsize > 400 * 1024 * 1024:
+            return None
         if kind in ("zip", None) and zipfile.is_zipfile(path):
             return ZipListing(path, max_names=limit)
         if kind in ("tar", "gz", "bz2", "xz") or path.lower().endswith((".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")):
-            # Tar is fully sequential; refuse anything that could blow RAM
-            fsize = size if size is not None else os.path.getsize(path)
-            if fsize <= 400 * 1024 * 1024:
+            if fsize <= 200 * 1024 * 1024:
                 return TarListing(path, max_names=min(limit, MAX_TAR_NAMES))
     except (OSError, MemoryError, zipfile.BadZipFile, tarfile.TarError):
         return None
