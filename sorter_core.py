@@ -6,7 +6,7 @@ Performance (3.1 + 4.1 + 4.2.1):
 - MemoryError / OSError fallbacks so a single bad file never kills the whole scan
 - Cache still used; entry count and size are bounded
 - Smaller classification batches under load
-- 4.2.1: per-file hard timeout (8s) + tiny batches so one pathological zip/audio cannot freeze Downloads
+- 4.2.1: selective deep (identity files only) + 5s timeout + workers=2 – freeze resistant, type detection kept
 - 4.2.1: even more conservative workers for 1k–4k file folders (typical Downloads)
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ LEGACY_FOLDERS = {"programs & installers", "spreadsheets", "minecraft & mods", "
 
 # Hard ceiling: no single file may block the scan longer than this (seconds).
 # Protects against rare pathological zips / AV locks / network-ish files in Downloads.
-FILE_TIMEOUT_SEC = 8.0
+FILE_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -104,7 +104,7 @@ def check_scope(scope: str):
         raise ValueError(f"Not a folder: {scope}")
     if os.path.dirname(p) == p:
         raise ValueError("Refusing to sort an entire drive. Pick a folder such as Downloads.")
-    home = os.path.abspath(os.path.expanduser("~") )
+    home = os.path.abspath(os.path.expanduser("~"))
     if os.path.normcase(p) == os.path.normcase(home):
         raise ValueError("Refusing to sort your whole home folder. Pick a subfolder (Downloads, Desktop, ...).")
     for env in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
@@ -257,10 +257,26 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     total = len(files)
     done = [total - len(todo)]
     lock = threading.Lock()
-    workers = workers if workers is not None else adaptive_workers(total)
+    workers = workers if workers is not None else (2 if total > 500 else adaptive_workers(total))
     throttle = ProgressThrottle(progress, interval=0.50)
     if progress and done[0]:
         throttle.force(done[0], total, "analysing contents")
+
+    # SELECTIVE DEEP for large scans:
+    # Still open high-value identity files (fabric.mod.json, mods.toml,
+    # [Content_Types].xml, MANIFEST.MF, pack.mcmeta, etc.) but with tight
+    # name limits and size gates. Generic huge zips fall back to magic+name.
+    selective = total > 600
+    if selective:
+        import fsengine.perf as _perf
+        _orig_max_names = _perf.max_names_for
+        def _tight_names(size):
+            if size > 80 * 1024 * 1024:
+                return 50
+            if size > 20 * 1024 * 1024:
+                return 120
+            return 250
+        _perf.max_names_for = _tight_names
 
     def _classify_one(p: str, size: int) -> Verdict:
         try:
@@ -300,7 +316,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         return p, v, key
 
     if todo and not cancelled():
-        batch_size = 200 if total > 1000 else (400 if total > 500 else 800)
+        batch_size = 120 if total > 800 else (200 if total > 400 else 400)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
             for i in range(0, len(todo), batch_size):
                 if cancelled():
@@ -320,6 +336,9 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                             pass
                 if total > 800:
                     time.sleep(0.05)
+
+    if selective:
+        _perf.max_names_for = _orig_max_names
 
     if use_cache:
         _save_cache(cache)
