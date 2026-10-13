@@ -6,7 +6,7 @@ Performance (3.1 + 4.1 + 4.2.1):
 - MemoryError / OSError fallbacks so a single bad file never kills the whole scan
 - Cache still used; entry count and size are bounded
 - Smaller classification batches under load
-- 4.2.1: per-file hard timeout (12s) so one pathological zip/audio cannot freeze Downloads
+- 4.2.1: per-file hard timeout (8s) + tiny batches so one pathological zip/audio cannot freeze Downloads
 - 4.2.1: even more conservative workers for 1k–4k file folders (typical Downloads)
 """
 from __future__ import annotations
@@ -38,7 +38,7 @@ LEGACY_FOLDERS = {"programs & installers", "spreadsheets", "minecraft & mods", "
 
 # Hard ceiling: no single file may block the scan longer than this (seconds).
 # Protects against rare pathological zips / AV locks / network-ish files in Downloads.
-FILE_TIMEOUT_SEC = 12.0
+FILE_TIMEOUT_SEC = 8.0
 
 
 @dataclass
@@ -104,7 +104,7 @@ def check_scope(scope: str):
         raise ValueError(f"Not a folder: {scope}")
     if os.path.dirname(p) == p:
         raise ValueError("Refusing to sort an entire drive. Pick a folder such as Downloads.")
-    home = os.path.abspath(os.path.expanduser("~"))
+    home = os.path.abspath(os.path.expanduser("~") )
     if os.path.normcase(p) == os.path.normcase(home):
         raise ValueError("Refusing to sort your whole home folder. Pick a subfolder (Downloads, Desktop, ...).")
     for env in ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
@@ -258,7 +258,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     done = [total - len(todo)]
     lock = threading.Lock()
     workers = workers if workers is not None else adaptive_workers(total)
-    throttle = ProgressThrottle(progress, interval=0.40)
+    throttle = ProgressThrottle(progress, interval=0.50)
     if progress and done[0]:
         throttle.force(done[0], total, "analysing contents")
 
@@ -287,7 +287,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         if th.is_alive():
             from fsengine.model import review
             v = review("Timed out while analysing (skipped deep look)",
-                       [f">{FILE_TIMEOUT_SEC:.0f}s", f"size={size}", "typical of locked or pathological archives"],
+                       [f"{FILE_TIMEOUT_SEC:.0f}s limit", f"size={size}", "typical of locked or pathological archives"],
                        "Unreadable")
         else:
             v = box[0]
@@ -300,7 +300,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         return p, v, key
 
     if todo and not cancelled():
-        batch_size = 400 if total > 1500 else (800 if total > 800 else 1500)
+        batch_size = 200 if total > 1000 else (400 if total > 500 else 800)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
             for i in range(0, len(todo), batch_size):
                 if cancelled():
@@ -318,8 +318,8 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                             cache[key] = v.to_json()
                         except Exception:
                             pass
-                if total > 1200:
-                    time.sleep(0.03)
+                if total > 800:
+                    time.sleep(0.05)
 
     if use_cache:
         _save_cache(cache)
