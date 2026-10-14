@@ -1,0 +1,103 @@
+"""FileSorter 5.0 – content-aware Sort + Search. Soft Aurora themes, wide settings, adaptive.
+
+  python file_sorter.py                       -> GUI
+  python file_sorter.py PATH [--apply] [--audit] [--explain]
+  python file_sorter.py --undo
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import queue
+import sys
+import threading
+import time
+
+import sorter_core as core
+from fsengine.settings import load_settings, save_settings, reset_settings, scale_factor, scroll_step
+from fsengine.themes import get_theme, THEMES
+
+APP_TITLE = "FileSorter 5.0"
+APP_VERSION = "5.0"
+
+def cli(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description="Content-aware file sorter")
+    ap.add_argument("path", nargs="?")
+    ap.add_argument("--dest", help="destination root (default: same as path)")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--audit", action="store_true")
+    ap.add_argument("--no-recursive", action="store_true")
+    ap.add_argument("--explain", action="store_true")
+    ap.add_argument("--keep-empty", action="store_true")
+    ap.add_argument("--undo", action="store_true")
+    a = ap.parse_args(argv)
+    if a.undo:
+        n, failed = core.undo()
+        print(f"restored {n} item(s)")
+        for p, why in failed:
+            print("  could not restore", p, "-", why)
+        return 1 if failed else 0
+    if not a.path:
+        ap.print_help()
+        return 2
+
+    def prog(done, total, stage):
+        if total:
+            print(f"\r{stage}: {done}/{total} ({100 * done / total:.0f}%)", end="", file=sys.stderr)
+
+    try:
+        res = core.scan(a.path, a.dest, recursive=not a.no_recursive,
+                        mode="audit" if a.audit else "sort", progress=prog)
+    except ValueError as exc:
+        print("error:", exc)
+        return 2
+    print(file=sys.stderr)
+    print(f"{len(res.items)} to move, {res.in_place} in place, {res.seconds:.1f}s")
+    for cat, items in res.by_category().items():
+        print(f"\n{cat} ({len(items)})")
+        for it in items[: (len(items) if a.explain else 5)]:
+            print(f"  {it.name}  <{it.verdict.level}> {it.verdict.label}")
+            if a.explain:
+                for e in it.verdict.evidence:
+                    print(f"      - {e}")
+    if not a.apply:
+        print("\nPreview only. Add --apply to move.")
+        return 0
+    out = core.execute(res, remove_empty=not a.keep_empty)
+    print(f"moved {len(out.moved)}, failed {len(out.failed)}")
+    return 0
+
+# ───────────────────────────────────────────── Settings dialog
+def open_settings(parent, cfg: dict, on_save) -> None:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+
+    win = tk.Toplevel(parent)
+    win.title("Settings")
+    win.geometry("720x560")
+    win.minsize(600, 480)
+    win.transient(parent)
+
+    nb = ttk.Notebook(win)
+    nb.pack(fill="both", expand=True, padx=10, pady=10)
+
+    # --- Appearance ---
+    f_app = ttk.Frame(nb, padding=12)
+    nb.add(f_app, text="Appearance")
+    theme_v = tk.StringVar(value=cfg["appearance"]["theme"])
+    ttk.Label(f_app, text="Theme (soft Aurora gradients)").grid(row=0, column=0, sticky="w")
+    for i, (tid, t) in enumerate(THEMES.items()):
+        ttk.Radiobutton(f_app, text=t["label"], variable=theme_v, value=tid).grid(
+            row=1, column=i, sticky="w", padx=8, pady=4)
+    ttk.Label(f_app, text="GUI scale (%)").grid(row=2, column=0, sticky="w", pady=(16, 0))
+    scale_v = tk.IntVar(value=int(cfg["appearance"]["gui_scale"]))
+    scale_row = ttk.Frame(f_app)
+    scale_row.grid(row=3, column=0, columnspan=3, sticky="ew")
+    ttk.Scale(scale_row, from_=75, to=150, orient="horizontal", variable=scale_v,
+              command=lambda v: scale_lbl.config(text=f"{int(float(v))}%")).pack(side="left", fill="x", expand=True)
+    scale_lbl = ttk.Label(scale_row, text=f"{scale_v.get()}%", width=6)
+    scale_lbl.pack(side="left", padx=6)
+    for pct in (75, 100, 125, 150):
+        ttk.Button(scale_row, text=str(pct), width=4,
+                   command=lambda p=pct: (scale_v.set(p), scale_lbl.config(text=f"{p}%"))).pack(side="left", padx=2)
+    ttk.Label(f_app, text="Density"
