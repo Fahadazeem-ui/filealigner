@@ -11,8 +11,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Write glass UI hex parts
-        run: python boot_write_ui.py
       - name: Install deps
         run: pip install pyinstaller pywebview
       - name: Verify glass UI
@@ -29,7 +27,7 @@ jobs:
           PY
       - name: Build exe
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine.ui_html --hidden-import=fsengine._ui_h0 --hidden-import=fsengine._ui_h1 --hidden-import=fsengine._ui_h2 file_sorter.py
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine.ui_html --hidden-import=fsengine._uh0 --hidden-import=fsengine._uh1 --hidden-import=fsengine._uh2 --hidden-import=fsengine._uh3 --hidden-import=fsengine._uh4 --hidden-import=fsengine._uh5 --hidden-import=fsengine._uh6 --hidden-import=fsengine._uh7 --hidden-import=fsengine._uh8 --hidden-import=fsengine._uh9 file_sorter.py
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
         continue-on-error: true
