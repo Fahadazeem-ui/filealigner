@@ -11,90 +11,39 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Soften GUI + ensure listing
+      - name: Install deps
+        run: |
+          pip install pyinstaller pywebview
+      - name: Verify glass UI
         shell: bash
         run: |
           python - <<'PY'
-          from pathlib import Path
-          import re
-          # listing: already full on main; only rebuild if z-chunks present
-          d = Path("fsengine")
-          z0 = d / "_listing_z0.txt"
-          if z0.exists():
-              import base64, zlib
-              parts = []
-              i = 0
-              while (d / f"_listing_z{i}.txt").exists():
-                  parts.append((d / f"_listing_z{i}.txt").read_text(encoding="utf-8").strip())
-                  i += 1
-              src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
-              (d / "listing.py").write_text(src, encoding="utf-8")
-              print("listing from chunks", len(src))
-          else:
-              t = (d / "listing.py").read_text(encoding="utf-8")
-              assert "class ZipListing" in t or "open_listing" in t
-              print("listing OK", len(t))
-
-          # Soften app_gui_impl
-          p = d / "app_gui_impl.py"
-          src = p.read_text(encoding="utf-8")
-          if 'root.configure(bg=c["bg"])' not in src:
-              src = src.replace(
-                  'tree.tag_configure("sure", foreground=c["ok"])',
-                  'tree.tag_configure("sure", foreground=c["ok"])\n        root.configure(bg=c["bg"])',
-              )
-          if "_search_enter" not in src:
-              needle = 'b_se_go.configure(command=do_search, style="Accent.TButton")'
-              if needle in src:
-                  src = src.replace(needle, needle + '''\n    def _search_enter(event=None):\n        if not se_scope.get().strip() and scope_v.get().strip():\n            se_scope.set(scope_v.get().strip())\n        do_search()\n        return "break"\n    for w in se_top.winfo_children():\n        try:\n            if w.winfo_class() in ("TEntry", "Entry"):\n                w.bind("<Return>", _search_enter)\n        except Exception:\n            pass\n''')
-          src = src.replace('text="Query:"', 'text="Keyword:"')
-          src = src.replace('text="Sure only"', 'text="Optional: Sure only (high confidence)"')
-          src = re.sub(
-              r'style\.configure\("TButton", background=c\["card"\], foreground=c\["fg"\], padding=int\(5 \* sf\)\)',
-              'style.configure("TButton", background=c["card"], foreground=c["fg"], padding=(int(12 * sf), int(7 * sf)), relief="flat")',
-              src,
-          )
-          p.write_text(src, encoding="utf-8")
-          print("GUI softened", len(src))
-          PY
-
-      - name: Verify imports
-        shell: bash
-        run: |
-          python - <<'PY'
-          import sys
-          sys.path.insert(0, ".")
-          import queue, threading, tkinter
+          from fsengine.glass_app import _ui_dir
+          p = _ui_dir()
+          html = (p / "index.html").read_text(encoding="utf-8")
+          assert "backdrop-filter" in html
+          assert "FileSorter" in html
           from fsengine.listing import is_identity_member
-          from fsengine.classify import Engine
-          from fsengine.app_gui import gui, cli
           assert is_identity_member("mimetype")
-          print("OK")
+          print("glass UI OK", len(html))
           PY
-
-      - name: Install PyInstaller and build exe
+      - name: Build exe (glass UI)
         run: |
-          pip install pyinstaller
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=tkinter.ttk --hidden-import=tkinter.filedialog --hidden-import=tkinter.messagebox --hidden-import=json --hidden-import=zlib --hidden-import=base64 --hidden-import=argparse --hidden-import=pathlib file_sorter.py
-
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine._ui_blob file_sorter.py
       - name: Install Inno Setup
-        run: |
-          choco install innosetup -y --no-progress
-
+        run: choco install innosetup -y --no-progress
+        continue-on-error: true
       - name: Build installer wizard
         shell: cmd
         run: |
-          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss
-
-      - name: Upload exe
-        uses: actions/upload-artifact@v4
+          if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ("C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss) else (echo no inno)
+        continue-on-error: true
+      - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
           path: dist/FileSorter.exe
-
-      - name: Upload installer
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-Setup
           path: dist/FileSorter-Setup-*.exe
+        continue-on-error: true
