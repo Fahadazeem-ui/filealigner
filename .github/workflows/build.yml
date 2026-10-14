@@ -11,9 +11,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Write glass UI hex parts
+        run: python scripts_write_ui.py
       - name: Install deps
         run: pip install pyinstaller pywebview
-      - name: Verify glass UI extract
+      - name: Verify glass UI
         shell: bash
         run: |
           python - <<'PY'
