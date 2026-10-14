@@ -7,11 +7,15 @@ _impl = _dir / "app_gui_impl.py"
 if _impl.exists():
     _SRC = _impl.read_text(encoding="utf-8")
 else:
-    _parts = sorted(
-        _dir.glob("_src_part*.py.txt"),
-        key=lambda p: int(p.stem.replace("_src_part", "").replace(".py", "")),
-    )
-    if not _parts:
-        raise ImportError("Missing app_gui_impl.py or _src_part*.py.txt")
-    _SRC = "".join(p.read_text(encoding="utf-8") for p in _parts)
+    _chunks = sorted(_dir.glob("_impl_chunk*.txt"), key=lambda p: int(p.stem.replace("_impl_chunk", "")))
+    if _chunks:
+        _SRC = "".join(p.read_text(encoding="utf-8") for p in _chunks)
+    else:
+        _parts = sorted(
+            _dir.glob("_src_part*.py.txt"),
+            key=lambda p: int(p.stem.replace("_src_part", "").replace(".py", "")),
+        )
+        if not _parts:
+            raise ImportError("Missing app_gui_impl.py / chunks / _src_part*")
+        _SRC = "".join(p.read_text(encoding="utf-8") for p in _parts)
 exec(compile(_SRC, str(_dir / "app_gui_impl.py"), "exec"), globals())
