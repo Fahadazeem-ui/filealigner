@@ -9,7 +9,7 @@ Content-aware **Sort** and **Search** in one app. Soft Aurora themes (Cool / War
 ## Themes
 Settings → Appearance:
 - **Aurora Cool** – soft lavender–sky–mint
-- **Aurora Warm** – soft blush–lilac–powder blue
+- **Aurora Warm** – soft blush–lilac–powder blue  
 - **Aurora Night** – soft slate–indigo (low glare)
 
 Also: **GUI scale** 75–150%, **scroll sensitivity**, density, confirmations, conservative PC mode.

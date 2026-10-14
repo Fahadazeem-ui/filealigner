@@ -1,4 +1,4 @@
-"""FileSorter 5.0 – content-aware Sort + Search. Soft Aurora themes, wide settings, adaptive.
+"""FileSorter 5.0 – content-aware Sort + Search.
 
   python file_sorter.py                       -> GUI
   python file_sorter.py PATH [--apply] [--audit] [--explain]
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sys
 
-from fsengine.app_gui import cli, gui  # noqa: F401
+from fsengine.app_gui import cli, gui
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
