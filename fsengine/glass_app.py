@@ -1,20 +1,26 @@
-"""FileSorter 5.0 — glass UI via pywebview (real soft glass panels from HTML/CSS)."""
+"""FileSorter 5.0 — glass UI via pywebview (embedded soft glass HTML)."""
 from __future__ import annotations
 
-import os
+import base64
 import sys
+import tempfile
 import threading
 import traceback
+import zlib
 from pathlib import Path
 
+from fsengine._ui_blob import _UI_B64
+
+
 def _ui_dir() -> Path:
-    if getattr(sys, "frozen", False):
-        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
-        cand = base / "fsengine" / "ui"
-        if cand.is_dir():
-            return cand
-        return base / "ui"
-    return Path(__file__).resolve().parent / "ui"
+    """Extract embedded UI once to a temp folder (frozen-safe)."""
+    d = Path(tempfile.gettempdir()) / "filesorter5_ui"
+    d.mkdir(parents=True, exist_ok=True)
+    index = d / "index.html"
+    if not index.exists() or index.stat().st_size < 1000:
+        html = zlib.decompress(base64.b64decode(_UI_B64)).decode("utf-8")
+        index.write_text(html, encoding="utf-8")
+    return d
 
 
 class Api:
