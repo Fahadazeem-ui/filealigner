@@ -3,6 +3,18 @@ from typing import Any
 
 # Soft Aurora gradients — low-contrast, eye-safe, blended (not harsh)
 AURORA_COOL = {
+    "label": "Aurora Cool",
+    "card": "#e4ebf4",
+    "hover": "#c4d4e8",
+    "accent_fg": "#ffffff",
+    "entry_bg": "#f7f9fc",
+    "tree_bg": "#f7f9fc",
+    "detail_bg": "#f0f4f9",
+    "ok": "#4f8a73",
+    "progress": "#6b8cae",
+    "review": "#b08a4a",
+    "unit": "#5a7aa0",
+    "unsure": "#a06a6a",
     "name": "Aurora Cool",
     "bg": "#e8eef5",
     "bg2": "#dce6f2",
@@ -22,6 +34,18 @@ AURORA_COOL = {
 }
 
 AURORA_WARM = {
+    "label": "Aurora Warm",
+    "card": "#f2ebe4",
+    "hover": "#e0d4c8",
+    "accent_fg": "#ffffff",
+    "entry_bg": "#fcf9f6",
+    "tree_bg": "#fcf9f6",
+    "detail_bg": "#f9f4f0",
+    "ok": "#6f8a5f",
+    "progress": "#c4a08a",
+    "review": "#b08a4a",
+    "unit": "#9a7a6a",
+    "unsure": "#a06a6a",
     "name": "Aurora Warm",
     "bg": "#f5eee8",
     "bg2": "#f0e6de",
@@ -41,6 +65,18 @@ AURORA_WARM = {
 }
 
 AURORA_NIGHT = {
+    "label": "Aurora Night",
+    "card": "#2a3140",
+    "hover": "#3c4454",
+    "accent_fg": "#10131a",
+    "entry_bg": "#1f2430",
+    "tree_bg": "#1f2430",
+    "detail_bg": "#202530",
+    "ok": "#7fc0a8",
+    "progress": "#7a8eb0",
+    "review": "#d4b07a",
+    "unit": "#8aa0c8",
+    "unsure": "#d08a8a",
     "name": "Aurora Night",
     "bg": "#1a1e28",
     "bg2": "#222833",

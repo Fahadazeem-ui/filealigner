@@ -396,8 +396,8 @@ def gui():
             search_panel.pack_forget()
             sort_panel.pack(fill="x", after=topbar)
             tree.heading("#0", text="Destination / item  (double-click or Space = tick)")
-            b_mode_sort.state(["Accent.TButton"])
-            b_mode_search.state(["TButton"])
+            b_mode_sort.configure(style="Accent.TButton")
+            b_mode_search.configure(style="TButton")
             if state["res"]:
                 render_sort()
             else:
@@ -408,8 +408,8 @@ def gui():
             sort_panel.pack_forget()
             search_panel.pack(fill="x", after=topbar)
             tree.heading("#0", text="Search results")
-            b_mode_search.state(["Accent.TButton"])
-            b_mode_sort.state(["TButton"])
+            b_mode_search.configure(style="Accent.TButton")
+            b_mode_sort.configure(style="TButton")
             if state["search_res"]:
                 render_search()
             else:
