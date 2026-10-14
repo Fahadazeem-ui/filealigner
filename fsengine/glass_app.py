@@ -1,7 +1,6 @@
 """FileSorter 5.0 — glass UI via pywebview (embedded soft glass HTML)."""
 from __future__ import annotations
 
-import base64
 import sys
 import tempfile
 import threading
@@ -9,7 +8,7 @@ import traceback
 import zlib
 from pathlib import Path
 
-from fsengine._ui_blob import _UI_B64
+from fsengine._ui_blob import _UI_HEX
 
 
 def _ui_dir() -> Path:
@@ -18,7 +17,7 @@ def _ui_dir() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     index = d / "index.html"
     if not index.exists() or index.stat().st_size < 1000:
-        html = zlib.decompress(base64.b64decode(_UI_B64)).decode("utf-8")
+        html = zlib.decompress(bytes.fromhex(_UI_HEX)).decode("utf-8")
         index.write_text(html, encoding="utf-8")
     return d
 
@@ -77,12 +76,7 @@ class Api:
         try:
             import sorter_core as core
             self._cancel.clear()
-            res = core.scan(
-                folder,
-                dest or None,
-                recursive=bool(opts.get("recursive", True)),
-                mode="sort",
-            )
+            res = core.scan(folder, dest or None, recursive=bool(opts.get("recursive", True)), mode="sort")
             self._last_res = res
             self._id_map.clear()
             items = []
@@ -132,13 +126,7 @@ class Api:
             root = (opts.get("root") or "").strip() or str(Path.home())
             type_filter = (opts.get("type") or "") or ""
             sure_only = bool(opts.get("sure_only", False))
-            res = do_search(
-                root,
-                query or "",
-                sure_only=sure_only,
-                recursive=True,
-                result_limit=5000,
-            )
+            res = do_search(root, query or "", sure_only=sure_only, recursive=True, result_limit=5000)
             hits = []
             for h in res.hits:
                 cat = (getattr(h, "category", None) or getattr(h.verdict, "path", "") or "").lower()
@@ -162,14 +150,9 @@ class Api:
                         ok = True
                     if not ok:
                         continue
-                hits.append({
-                    "name": name,
-                    "path": h.path,
-                    "size": h.size,
-                    "is_dir": h.is_dir,
-                    "category": getattr(h, "category", "") or getattr(h.verdict, "path", ""),
-                    "level": getattr(h, "level", "") or getattr(h.verdict, "level", ""),
-                })
+                hits.append({"name": name, "path": h.path, "size": h.size, "is_dir": h.is_dir,
+                             "category": getattr(h, "category", "") or getattr(h.verdict, "path", ""),
+                             "level": getattr(h, "level", "") or getattr(h.verdict, "level", "")})
             return {"hits": hits, "seconds": res.seconds, "scanned": res.scanned}
         except Exception as e:
             return {"error": str(e), "trace": traceback.format_exc()}
@@ -182,24 +165,15 @@ def run_glass():
         print("pywebview not installed — falling back to classic Tk UI")
         from fsengine.app_gui import gui
         return gui()
-
     ui = _ui_dir()
     index = ui / "index.html"
     if not index.is_file():
         print("UI missing at", index, "— falling back to Tk")
         from fsengine.app_gui import gui
         return gui()
-
     api = Api()
-    window = webview.create_window(
-        "FileSorter 5.0",
-        url=index.as_uri(),
-        js_api=api,
-        width=1180,
-        height=760,
-        min_size=(900, 600),
-        background_color="#1a1e2a",
-    )
+    webview.create_window("FileSorter 5.0", url=index.as_uri(), js_api=api, width=1180, height=760,
+                          min_size=(900, 600), background_color="#1a1e2a")
     webview.start(debug=False)
 
 
