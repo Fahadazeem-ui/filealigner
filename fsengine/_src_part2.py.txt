@@ -1,0 +1,33 @@
+.grid(row=4, column=0, sticky="w", pady=(12, 0))
+    dens_v = tk.StringVar(value=cfg["appearance"]["density"])
+    ttk.Combobox(f_app, textvariable=dens_v, values=("comfortable", "compact", "spacious"),
+                 state="readonly", width=16).grid(row=5, column=0, sticky="w")
+    anim_v = tk.BooleanVar(value=bool(cfg["appearance"].get("animations", True)))
+    ttk.Checkbutton(f_app, text="Subtle animations / smooth progress", variable=anim_v).grid(
+        row=6, column=0, sticky="w", pady=8)
+
+    # --- Interaction ---
+    f_int = ttk.Frame(nb, padding=12)
+    nb.add(f_int, text="Interaction")
+    ttk.Label(f_int, text="Scroll sensitivity").grid(row=0, column=0, sticky="w")
+    scroll_v = tk.DoubleVar(value=float(cfg["interaction"]["scroll_sensitivity"]))
+    sc_row = ttk.Frame(f_int)
+    sc_row.grid(row=1, column=0, sticky="ew")
+    ttk.Scale(sc_row, from_=0.5, to=2.0, orient="horizontal", variable=scroll_v).pack(side="left", fill="x", expand=True)
+    sc_lbl = ttk.Label(sc_row, text=f"{scroll_v.get():.1f}x", width=6)
+    sc_lbl.pack(side="left")
+    scroll_v.trace_add("write", lambda *_: sc_lbl.config(text=f"{scroll_v.get():.1f}x"))
+    ttk.Label(f_int, text="Confirm before Sort").grid(row=2, column=0, sticky="w", pady=(12, 0))
+    conf_v = tk.StringVar(value=cfg["interaction"]["confirm_sort"])
+    ttk.Combobox(f_int, textvariable=conf_v, values=("always", "many", "never"),
+                 state="readonly", width=12).grid(row=3, column=0, sticky="w")
+    conf_undo_v = tk.BooleanVar(value=bool(cfg["interaction"]["confirm_undo"]))
+    ttk.Checkbutton(f_int, text="Confirm before Undo", variable=conf_undo_v).grid(row=4, column=0, sticky="w", pady=6)
+
+    # --- Sort ---
+    f_sort = ttk.Frame(nb, padding=12)
+    nb.add(f_sort, text="Sort")
+    mode_v = tk.StringVar(value=cfg["sort"]["default_mode"])
+    ttk.Label(f_sort, text="Default mode").grid(row=0, column=0, sticky="w")
+    ttk.Combobox(f_sort, textvariable=mode_v, values=("sort", "audit"), state="readonly", width=12).grid(row=1, column=0, sticky="w")
+    rec_v = tk.BooleanVar(valu
