@@ -11,25 +11,29 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Reconstruct full GUI from parts
+      - name: Verify GUI modules load
         shell: bash
         run: |
           python - <<'PY'
+          import base64, zlib
           from pathlib import Path
-          d = Path("fsengine")
-          parts = sorted(d.glob("_src_part*.py.txt"), key=lambda p: int(p.stem.replace("_src_part","").replace(".py","")))
-          print("parts found", len(parts))
-          if len(parts) >= 16:
-              src = "".join(p.read_text(encoding="utf-8") for p in parts)
-              (d / "app_gui_impl.py").write_text(src, encoding="utf-8")
-              print("wrote app_gui_impl.py", len(src))
-          else:
-              print("WARNING: only", len(parts), "parts — GUI may be incomplete")
+          import sys
+          sys.path.insert(0, ".")
+          from fsengine._zc0 import DATA as _0
+          from fsengine._zc1 import DATA as _1
+          from fsengine._zc2 import DATA as _2
+          from fsengine._zc3 import DATA as _3
+          from fsengine._zc4 import DATA as _4
+          from fsengine._zc5 import DATA as _5
+          src = zlib.decompress(base64.b64decode(_0+_1+_2+_3+_4+_5)).decode("utf-8")
+          print("GUI source length:", len(src))
+          assert len(src) > 30000, "GUI source too short"
+          print("OK — full GUI ready")
           PY
       - name: Install and build
         run: |
           pip install pyinstaller
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --add-data "fsengine/_src_part*.py.txt;fsengine" file_sorter.py
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
       - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
