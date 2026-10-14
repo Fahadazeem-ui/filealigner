@@ -12,24 +12,51 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Reconstruct listing.py
+      - name: Soften GUI + ensure listing
         shell: bash
         run: |
           python - <<'PY'
-          import base64, zlib
           from pathlib import Path
+          import re
+          # listing: already full on main; only rebuild if z-chunks present
           d = Path("fsengine")
-          parts = []
-          i = 0
-          while (d / f"_listing_z{i}.txt").exists():
-              parts.append((d / f"_listing_z{i}.txt").read_text(encoding="utf-8").strip())
-              i += 1
-          if not parts:
-              raise SystemExit("missing _listing_z*.txt")
-          src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
-          (d / "listing.py").write_text(src, encoding="utf-8")
-          assert "class ZipListing" in src
-          print("listing.py OK", len(src))
+          z0 = d / "_listing_z0.txt"
+          if z0.exists():
+              import base64, zlib
+              parts = []
+              i = 0
+              while (d / f"_listing_z{i}.txt").exists():
+                  parts.append((d / f"_listing_z{i}.txt").read_text(encoding="utf-8").strip())
+                  i += 1
+              src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
+              (d / "listing.py").write_text(src, encoding="utf-8")
+              print("listing from chunks", len(src))
+          else:
+              t = (d / "listing.py").read_text(encoding="utf-8")
+              assert "class ZipListing" in t or "open_listing" in t
+              print("listing OK", len(t))
+
+          # Soften app_gui_impl
+          p = d / "app_gui_impl.py"
+          src = p.read_text(encoding="utf-8")
+          if 'root.configure(bg=c["bg"])' not in src:
+              src = src.replace(
+                  'tree.tag_configure("sure", foreground=c["ok"])',
+                  'tree.tag_configure("sure", foreground=c["ok"])\n        root.configure(bg=c["bg"])',
+              )
+          if "_search_enter" not in src:
+              needle = 'b_se_go.configure(command=do_search, style="Accent.TButton")'
+              if needle in src:
+                  src = src.replace(needle, needle + '''\n    def _search_enter(event=None):\n        if not se_scope.get().strip() and scope_v.get().strip():\n            se_scope.set(scope_v.get().strip())\n        do_search()\n        return "break"\n    for w in se_top.winfo_children():\n        try:\n            if w.winfo_class() in ("TEntry", "Entry"):\n                w.bind("<Return>", _search_enter)\n        except Exception:\n            pass\n''')
+          src = src.replace('text="Query:"', 'text="Keyword:"')
+          src = src.replace('text="Sure only"', 'text="Optional: Sure only (high confidence)"')
+          src = re.sub(
+              r'style\.configure\("TButton", background=c\["card"\], foreground=c\["fg"\], padding=int\(5 \* sf\)\)',
+              'style.configure("TButton", background=c["card"], foreground=c["fg"], padding=(int(12 * sf), int(7 * sf)), relief="flat")',
+              src,
+          )
+          p.write_text(src, encoding="utf-8")
+          print("GUI softened", len(src))
           PY
 
       - name: Verify imports
@@ -41,6 +68,7 @@ jobs:
           import queue, threading, tkinter
           from fsengine.listing import is_identity_member
           from fsengine.classify import Engine
+          from fsengine.app_gui import gui, cli
           assert is_identity_member("mimetype")
           print("OK")
           PY
