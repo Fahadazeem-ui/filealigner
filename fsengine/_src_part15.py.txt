@@ -1,0 +1,49 @@
+       elif auto == "sure":
+                            it.selected = it.verdict.level == "Sure"
+                        else:
+                            it.selected = True
+                    render_sort()
+                    lv = res.counts_by_level()
+                    status_v.set(f"{len(res.items)} to move, {res.in_place} in place · "
+                                 + ", ".join(f"{k} {v}" for k, v in lv.items()) + f" · {res.seconds:.1f}s")
+                    b_sort.configure(state="normal" if res.items else "disabled")
+                elif m[0] == "qp":
+                    _, d, t, s = m
+                    if t:
+                        se_prog.configure(value=min(100, 100 * d / t))
+                        status_v.set(f"{s}: {d}/{t}")
+                elif m[0] == "qdone":
+                    se_prog.configure(value=100)
+                    busy(False, "search")
+                    state["search_res"] = m[1]
+                    render_search()
+                    status_v.set(f"{len(m[1].hits)} hits of {m[1].scanned} scanned · {m[1].seconds:.1f}s")
+                elif m[0] == "err":
+                    busy(False, "sort")
+                    busy(False, "search")
+                    messagebox.showerror(APP_TITLE, m[1])
+                    status_v.set("Error: " + m[1])
+        except queue.Empty:
+            pass
+        root.after(80, poll)
+
+    b_prev.configure(command=do_preview, style="Accent.TButton")
+    b_sort.configure(command=do_sort)
+    b_undo.configure(command=do_undo)
+    b_cancel.configure(command=lambda: state["cancel"] and state["cancel"].set())
+    b_se_go.configure(command=do_search, style="Accent.TButton")
+    b_se_cancel.configure(command=lambda: state["cancel"] and state["cancel"].set())
+
+    apply_theme()
+    show_mode("sort")
+    poll()
+    root.mainloop()
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        sys.exit(cli(sys.argv[1:]))
+    try:
+        gui()
+    except Exception as exc:
+        print("GUI unavailable:", exc, "\nCLI: python file_sorter.py --help")
+        sys.exit(1)
