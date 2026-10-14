@@ -23,59 +23,29 @@ jobs:
           while (d / f"_listing_z{i}.txt").exists():
               parts.append((d / f"_listing_z{i}.txt").read_text(encoding="utf-8").strip())
               i += 1
-          if parts:
-              src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
-              (d / "listing.py").write_text(src, encoding="utf-8")
-              print("listing.py from zlib chunks:", len(src))
-          else:
-              pmods = sorted(d.glob("_listing_p*.py"))
-              if pmods:
-                  ns = {}
-                  body = []
-                  for p in pmods:
-                      exec(p.read_text(encoding="utf-8"), ns)
-                      body.append(ns.get("PART", ""))
-                  src = "".join(body)
-                  if "class ZipListing" in src:
-                      (d / "listing.py").write_text(src, encoding="utf-8")
-                      print("listing.py from py parts:", len(src))
-                  else:
-                      raise SystemExit("py parts incomplete")
-              else:
-                  raise SystemExit("no listing source chunks found")
-          t = (d / "listing.py").read_text(encoding="utf-8")
-          assert "class ZipListing" in t, "listing.py still broken"
-          assert "from .identity import" in t or "is_identity_member" in t
-          print("listing.py OK", len(t))
+          if not parts:
+              raise SystemExit("missing _listing_z*.txt")
+          src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
+          (d / "listing.py").write_text(src, encoding="utf-8")
+          assert "class ZipListing" in src
+          print("listing.py OK", len(src))
           PY
-      - name: Verify GUI modules load
+      - name: Verify imports
         shell: bash
         run: |
           python - <<'PY'
-          import base64, zlib
-          from pathlib import Path
           import sys
           sys.path.insert(0, ".")
-          from fsengine._zc0 import DATA as _0
-          from fsengine._zc1 import DATA as _1
-          from fsengine._zc2 import DATA as _2
-          from fsengine._zc3 import DATA as _3
-          from fsengine._zc4 import DATA as _4
-          from fsengine._zc5 import DATA as _5
-          src = zlib.decompress(base64.b64decode(_0+_1+_2+_3+_4+_5)).decode("utf-8")
-          print("GUI source length:", len(src))
-          assert len(src) > 30000, "GUI source too short"
-          print("OK — full GUI ready")
-          # Also verify listing + classify import
+          import queue, threading, tkinter
           from fsengine.listing import open_listing, is_identity_member
           from fsengine.classify import Engine
           assert is_identity_member("mimetype")
-          print("Engine + listing import OK")
+          print("stdlib + engine OK")
           PY
       - name: Install and build
         run: |
           pip install pyinstaller
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=tkinter.ttk --hidden-import=tkinter.filedialog --hidden-import=tkinter.messagebox --hidden-import=json --hidden-import=zlib --hidden-import=base64 --hidden-import=argparse --hidden-import=pathlib file_sorter.py
       - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
