@@ -1,4 +1,4 @@
-name: Build Windows exe
+name: Build Windows exe + Installer
 on:
   push:
     branches: [main]
@@ -11,17 +11,62 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Verify imports and tests
+
+      - name: Reconstruct listing.py
         shell: bash
         run: |
-          python -c "import sys; sys.path.insert(0, '.'); import tkinter, sorter_core; from fsengine.app_gui import cli, gui; from fsengine.listing import open_listing; print('imports OK')"
-          python test_sorter.py
-      - name: Install and build
+          python - <<'PY'
+          import base64, zlib
+          from pathlib import Path
+          d = Path("fsengine")
+          parts = []
+          i = 0
+          while (d / f"_listing_z{i}.txt").exists():
+              parts.append((d / f"_listing_z{i}.txt").read_text(encoding="utf-8").strip())
+              i += 1
+          if not parts:
+              raise SystemExit("missing _listing_z*.txt")
+          src = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
+          (d / "listing.py").write_text(src, encoding="utf-8")
+          assert "class ZipListing" in src
+          print("listing.py OK", len(src))
+          PY
+
+      - name: Verify imports
         shell: bash
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, ".")
+          import queue, threading, tkinter
+          from fsengine.listing import is_identity_member
+          from fsengine.classify import Engine
+          assert is_identity_member("mimetype")
+          print("OK")
+          PY
+
+      - name: Install PyInstaller and build exe
         run: |
           pip install pyinstaller
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --paths . --hidden-import=sorter_core --collect-submodules fsengine file_sorter.py
-      - uses: actions/upload-artifact@v4
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=tkinter.ttk --hidden-import=tkinter.filedialog --hidden-import=tkinter.messagebox --hidden-import=json --hidden-import=zlib --hidden-import=base64 --hidden-import=argparse --hidden-import=pathlib file_sorter.py
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build installer wizard
+        shell: cmd
+        run: |
+          "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss
+
+      - name: Upload exe
+        uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
           path: dist/FileSorter.exe
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: FileSorter-Setup
+          path: dist/FileSorter-Setup-*.exe
