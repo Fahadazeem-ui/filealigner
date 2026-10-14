@@ -1,24 +1,21 @@
-"""FileSorter 5.0 — glass UI via pywebview (embedded soft glass HTML)."""
+"""FileSorter 5.0 — glass UI via pywebview (soft glass panels)."""
 from __future__ import annotations
 
 import sys
 import tempfile
 import threading
 import traceback
-import zlib
 from pathlib import Path
 
-from fsengine._ui_blob import _UI_HEX
+from fsengine.ui_html import _HTML
 
 
 def _ui_dir() -> Path:
-    """Extract embedded UI once to a temp folder (frozen-safe)."""
     d = Path(tempfile.gettempdir()) / "filesorter5_ui"
     d.mkdir(parents=True, exist_ok=True)
     index = d / "index.html"
     if not index.exists() or index.stat().st_size < 1000:
-        html = zlib.decompress(bytes.fromhex(_UI_HEX)).decode("utf-8")
-        index.write_text(html, encoding="utf-8")
+        index.write_text(_HTML, encoding="utf-8")
     return d
 
 
@@ -84,15 +81,13 @@ class Api:
                 key = str(id(it))
                 self._id_map[key] = it
                 items.append({
-                    "id": key,
-                    "name": it.name,
+                    "id": key, "name": it.name,
                     "path": getattr(it, "src", None) or getattr(it, "path", ""),
                     "sub": getattr(it.verdict, "path", "") or "",
                     "size": getattr(it, "size", 0) or 0,
                     "is_dir": bool(getattr(it, "is_dir", False)),
                     "category": getattr(it.verdict, "path", "") or getattr(it.verdict, "label", ""),
-                    "level": getattr(it.verdict, "level", ""),
-                    "selected": True,
+                    "level": getattr(it.verdict, "level", ""), "selected": True,
                 })
             return {"items": items, "seconds": getattr(res, "seconds", 0), "in_place": getattr(res, "in_place", 0)}
         except Exception as e:
@@ -138,15 +133,11 @@ class Api:
                         ok = True
                     elif type_filter == "video" and ("video" in cat or nl.endswith((".mp4", ".mkv", ".avi", ".mov", ".webm"))):
                         ok = True
-                    elif type_filter == "audio" and ("audio" in cat or nl.endswith((".mp3", ".wav", ".flac", ".aac", ".ogg"))):
-                        ok = True
-                    elif type_filter == "document" and ("document" in cat or "pdf" in cat or nl.endswith((".pdf", ".doc", ".docx", ".txt", ".md", ".xls", ".xlsx", ".ppt", ".pptx"))):
+                    elif type_filter == "document" and ("document" in cat or "pdf" in cat or nl.endswith((".pdf", ".doc", ".docx", ".txt", ".md", ".xls", ".xlsx"))):
                         ok = True
                     elif type_filter == "archive" and ("archive" in cat or nl.endswith((".zip", ".rar", ".7z", ".tar", ".gz"))):
                         ok = True
-                    elif type_filter == "executable" and ("executable" in cat or "app" in cat or nl.endswith((".exe", ".msi", ".apk", ".dmg", ".app"))):
-                        ok = True
-                    elif type_filter == "model" and ("model" in cat or "gguf" in cat or nl.endswith((".gguf", ".onnx", ".pt", ".safetensors"))):
+                    elif type_filter == "executable" and ("executable" in cat or nl.endswith((".exe", ".msi", ".apk"))):
                         ok = True
                     if not ok:
                         continue
@@ -167,10 +158,6 @@ def run_glass():
         return gui()
     ui = _ui_dir()
     index = ui / "index.html"
-    if not index.is_file():
-        print("UI missing at", index, "— falling back to Tk")
-        from fsengine.app_gui import gui
-        return gui()
     api = Api()
     webview.create_window("FileSorter 5.0", url=index.as_uri(), js_api=api, width=1180, height=760,
                           min_size=(900, 600), background_color="#1a1e2a")
