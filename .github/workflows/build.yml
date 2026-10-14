@@ -12,28 +12,26 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: |
-          pip install pyinstaller pywebview
-      - name: Verify glass UI
+        run: pip install pyinstaller pywebview
+      - name: Verify glass UI extract
         shell: bash
         run: |
           python - <<'PY'
-          from fsengine.glass_app import _ui_dir
-          p = _ui_dir()
-          html = (p / "index.html").read_text(encoding="utf-8")
-          assert "backdrop-filter" in html
-          assert "FileSorter" in html
+          from fsengine.ui_html import _HTML
+          assert "backdrop-filter" in _HTML, "no glass css"
+          assert "FileSorter" in _HTML
+          print("glass UI OK", len(_HTML))
           from fsengine.listing import is_identity_member
           assert is_identity_member("mimetype")
-          print("glass UI OK", len(html))
+          print("listing OK")
           PY
-      - name: Build exe (glass UI)
+      - name: Build exe
         run: |
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine._ui_blob file_sorter.py
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine.ui_html --hidden-import=fsengine._ui_h0 --hidden-import=fsengine._ui_h1 --hidden-import=fsengine._ui_h2 file_sorter.py
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
         continue-on-error: true
-      - name: Build installer wizard
+      - name: Build installer
         shell: cmd
         run: |
           if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ("C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss) else (echo no inno)
