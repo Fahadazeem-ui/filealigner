@@ -5,9 +5,7 @@
   python file_sorter.py --undo
 """
 from __future__ import annotations
-
 import sys
-
 from fsengine.app_gui import cli, gui
 
 if __name__ == "__main__":
@@ -15,6 +13,6 @@ if __name__ == "__main__":
         sys.exit(cli(sys.argv[1:]))
     try:
         gui()
-    except Exception as exc:
-        print("GUI unavailable:", exc, "\nCLI: python file_sorter.py --help")
+    except Exception as e:
+        print("GUI unavailable:", e, "\nCLI: python file_sorter.py --help")
         sys.exit(1)
