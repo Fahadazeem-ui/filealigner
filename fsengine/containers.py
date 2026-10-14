@@ -46,9 +46,13 @@ def kind_of(lst, ext: str) -> str | None:
         return "wheel"
     if lst.with_ext(".nuspec"):
         return "nupkg"
-    if ext == ".cbz" or (len(lst.names) >= 5 and sum(n.lower().endswith(IMG) for n in lst.names) >= 0.9 * len(lst.names)
-                         and ext == ".zip" and False):
+    # CBZ: explicit extension, or a zip that is almost entirely images (comic archive)
+    if ext == ".cbz":
         return "cbz"
+    if ext == ".zip" and len(lst.names) >= 5:
+        img_n = sum(1 for n in lst.names if n.lower().endswith(IMG))
+        if img_n >= 0.9 * len(lst.names):
+            return "cbz"
     return None
 
 

@@ -1,14 +1,27 @@
 name: Build Windows exe
-on: [push, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: pip install pyinstaller
-      - run: python test_sorter.py
-      - run: pyinstaller --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
+        with:
+          python-version: "3.12"
+      - name: Verify imports and tests
+        shell: bash
+        run: |
+          python -c "import sys; sys.path.insert(0, '.'); import tkinter, sorter_core; from fsengine.app_gui import cli, gui; from fsengine.listing import open_listing; print('imports OK')"
+          python test_sorter.py
+      - name: Install and build
+        shell: bash
+        run: |
+          pip install pyinstaller
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --paths . --hidden-import=sorter_core --collect-submodules fsengine file_sorter.py
       - uses: actions/upload-artifact@v4
-        with: { name: FileSorter-exe, path: dist/FileSorter.exe }
+        with:
+          name: FileSorter-exe
+          path: dist/FileSorter.exe

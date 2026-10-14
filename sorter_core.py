@@ -1,4 +1,14 @@
-"""FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/."""
+"""FileSorter core: scan -> preview -> execute -> undo.  All intelligence lives in fsengine/.
+
+Performance (3.1 + 4.1 + 4.2.1):
+- Adaptive worker count from fsengine.perf
+- Progress throttling (time-based) on huge listings – prevents UI freeze at ~1200 files
+- MemoryError / OSError fallbacks so a single bad file never kills the whole scan
+- Cache still used; entry count and size are bounded
+- Smaller classification batches under load
+- 4.2.1: selective deep (identity files only) + 5s timeout + workers=2 – freeze resistant, type detection kept
+- 4.2.1: even more conservative workers for 1k–4k file folders (typical Downloads)
+"""
 from __future__ import annotations
 
 import json
@@ -6,12 +16,13 @@ import os
 import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from fsengine import ENGINE_VERSION, Engine
 from fsengine.model import Verdict
+from fsengine.perf import adaptive_workers, ProgressThrottle
 from fsengine.rules import HOME_DIR, RESPECT_SUBFOLDERS, TOP_LEVEL_DOMAINS, taxonomy_names
 
 UNDO_DIR = Path(HOME_DIR) / "undo"
@@ -24,6 +35,10 @@ PARTIAL_EXT = {".crdownload", ".part", ".tmp", ".download", ".partial", ".opdown
 # folders the OLD extension-only sorter created; audit mode re-checks what is inside them
 LEGACY_FOLDERS = {"programs & installers", "spreadsheets", "minecraft & mods", "others", "code & web", "disk images", "3d models",
                   "pictures", "music", "video", "docs", "compressed"}
+
+# Hard ceiling: no single file may block the scan longer than this (seconds).
+# Protects against rare pathological zips / AV locks / network-ish files in Downloads.
+FILE_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -114,7 +129,7 @@ def _load_cache() -> dict:
         d = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
         if d.get("tag") == _cache_tag():
             return d.get("v", {})
-    except (OSError, ValueError):
+    except (OSError, ValueError, MemoryError):
         pass
     return {}
 
@@ -124,8 +139,9 @@ def _save_cache(cache: dict):
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         if len(cache) > 300000:
             cache = dict(list(cache.items())[-200000:])
-        CACHE_PATH.write_text(json.dumps({"tag": _cache_tag(), "v": cache}), encoding="utf-8")
-    except OSError:
+        clean = {k: v for k, v in cache.items() if len(json.dumps(v, separators=(",", ":"))) < 8000}
+        CACHE_PATH.write_text(json.dumps({"tag": _cache_tag(), "v": clean}, separators=(",", ":")), encoding="utf-8")
+    except (OSError, MemoryError):
         pass
 
 
@@ -139,7 +155,6 @@ def target_dir(dest_root: str, v: Verdict) -> str:
 
 
 def in_place(source: str, v: Verdict, dest_root: str) -> bool:
-    """Already where it belongs? Respects the user's own sub-folders inside a correct category."""
     parent = _norm(os.path.dirname(source))
     tdir = _norm(target_dir(dest_root, v))
     if parent == tdir or parent.startswith(tdir + os.sep):
@@ -154,7 +169,6 @@ _TAX = taxonomy_names()
 
 
 def _is_taxonomy_dir(path: str, dest_root: str) -> bool:
-    """Our own category folders (Games/Minecraft/Mods ...) are never 'units'."""
     rel = os.path.relpath(_norm(path), _norm(dest_root))
     if rel.startswith(".."):
         return False
@@ -172,7 +186,7 @@ def _audit_eligible(source: str, dest_root: str) -> bool:
 
 # ---------------------------------------------------------------- scan
 def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode: str = "sort",
-         progress=None, cancel: threading.Event | None = None, workers: int = 8, use_cache: bool = True,
+         progress=None, cancel: threading.Event | None = None, workers: int | None = None, use_cache: bool = True,
          engine: Engine | None = None) -> ScanResult:
     t0 = time.time()
     scope = check_scope(scope)
@@ -184,6 +198,7 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
     files: list[tuple[str, int, int]] = []
     units: list[Item] = []
     stack = [scope]
+    list_count = 0
     while stack and not cancelled():
         cur = stack.pop()
         try:
@@ -191,7 +206,6 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         except OSError as exc:
             res.skipped.append((cur, f"cannot read folder: {exc.strerror}"))
             continue
-        names = [e.name for e in entries]
         for e in entries:
             try:
                 is_dir = e.is_dir(follow_symlinks=False)
@@ -223,7 +237,8 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
                 except OSError:
                     continue
                 files.append((e.path, st.st_size, st.st_mtime_ns))
-        if progress and len(files) % 200 == 0:
+        list_count += 1
+        if progress and list_count % 150 == 0:
             progress(len(files), 0, "listing files")
 
     cache = _load_cache() if use_cache else {}
@@ -232,36 +247,108 @@ def scan(scope: str, dest_root: str | None = None, recursive: bool = True, mode:
         key = f"{p}|{size}|{mt}"
         hit = cache.get(key)
         if hit:
-            results[p] = Verdict.from_json(hit)
+            try:
+                results[p] = Verdict.from_json(hit)
+            except Exception:
+                todo.append((p, size, key))
         else:
             todo.append((p, size, key))
 
     total = len(files)
     done = [total - len(todo)]
     lock = threading.Lock()
+    workers = workers if workers is not None else (2 if total > 500 else adaptive_workers(total))
+    throttle = ProgressThrottle(progress, interval=0.50)
+    if progress and done[0]:
+        throttle.force(done[0], total, "analysing contents")
+
+    # SELECTIVE DEEP for large scans:
+    # Still open high-value identity files (fabric.mod.json, mods.toml,
+    # [Content_Types].xml, MANIFEST.MF, pack.mcmeta, etc.) but with tight
+    # name limits and size gates. Generic huge zips fall back to magic+name.
+    selective = total > 600
+    if selective:
+        import fsengine.perf as _perf
+        _orig_max_names = _perf.max_names_for
+        def _tight_names(size):
+            if size > 80 * 1024 * 1024:
+                return 50
+            if size > 20 * 1024 * 1024:
+                return 120
+            return 250
+        _perf.max_names_for = _tight_names
+
+    def _classify_one(p: str, size: int) -> Verdict:
+        try:
+            return eng.classify_file(p, size)
+        except MemoryError:
+            from fsengine.model import review
+            return review("Out of memory while analysing", [f"size={size}"], "Unreadable")
+        except Exception as exc:  # noqa: BLE001
+            from fsengine.model import review
+            return review("Could not analyse file", [f"{type(exc).__name__}: {exc}"], "Unreadable")
 
     def work(args):
         p, size, key = args
         if cancelled():
             return p, None, key
-        v = eng.classify_file(p, size)
+        # Per-file timeout: run classify in a short-lived thread so one bad zip
+        # or AV-locked file cannot freeze the whole Downloads scan.
+        box: list = [None]
+        def _run():
+            box[0] = _classify_one(p, size)
+        th = threading.Thread(target=_run, daemon=True)
+        th.start()
+        th.join(timeout=FILE_TIMEOUT_SEC)
+        if th.is_alive():
+            from fsengine.model import review
+            v = review("Timed out while analysing (skipped deep look)",
+                       [f"{FILE_TIMEOUT_SEC:.0f}s limit", f"size={size}", "typical of locked or pathological archives"],
+                       "Unreadable")
+        else:
+            v = box[0]
+            if v is None:
+                from fsengine.model import review
+                v = review("Could not analyse file", ["empty result"], "Unreadable")
         with lock:
             done[0] += 1
-            if progress and done[0] % 25 == 0:
-                progress(done[0], total, "analysing contents")
+            throttle.maybe(done[0], total, "analysing contents")
         return p, v, key
 
     if todo and not cancelled():
+        batch_size = 120 if total > 800 else (200 if total > 400 else 400)
         with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-            for p, v, key in ex.map(work, todo):
-                if v is not None:
-                    results[p] = v
-                    cache[key] = v.to_json()      # cache the raw verdict, before batch-context adjustments
+            for i in range(0, len(todo), batch_size):
+                if cancelled():
+                    break
+                batch = todo[i:i + batch_size]
+                futures = [ex.submit(work, a) for a in batch]
+                for fut in as_completed(futures):
+                    try:
+                        p, v, key = fut.result(timeout=FILE_TIMEOUT_SEC + 3)
+                    except Exception:
+                        continue
+                    if v is not None:
+                        results[p] = v
+                        try:
+                            cache[key] = v.to_json()
+                        except Exception:
+                            pass
+                if total > 800:
+                    time.sleep(0.05)
+
+    if selective:
+        _perf.max_names_for = _orig_max_names
+
     if use_cache:
         _save_cache(cache)
+    throttle.force(total, total, "analysing contents")
 
     ents = [(os.path.dirname(p), os.path.basename(p), v) for p, v in results.items()]
-    eng.context_pass(ents)
+    try:
+        eng.context_pass(ents)
+    except Exception:
+        pass
 
     sizes = {p: s for p, s, _ in files}
     candidates = [Item(p, False, sizes[p], v) for p, v in results.items()] + units

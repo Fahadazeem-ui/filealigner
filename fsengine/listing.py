@@ -1,6 +1,17 @@
 """One interface over zip / tar / plain folders, so identification rules are written ONCE
 and work the same on `mod.jar`, `mod.tar.gz` and an already-unzipped `mod/` folder.
-Nothing is ever extracted to disk: we read the table of contents and a few small files in RAM."""
+Nothing is ever extracted to disk: we read the table of contents and a few small files in RAM.
+
+Performance notes (FileSorter 3.1 + 4.2.1 + 5.0 selective deep):
+- Name lists are hard-capped (see fsengine.perf) so a 100k-entry archive cannot explode RAM.
+- Tar is only opened when the whole file is under a safe size.
+- Zip central-directory reads stay streaming; we never load the whole archive.
+- 4.2.1: Zip open is wrapped so a pathological/AV-locked zip fails fast instead of hanging.
+- 4.2.1: selective – skip archives >400MB, tighter limits so identity files still found without hang.
+- 5.0: ONLY identity / type-clarifying mini-files are read from inside archives
+  (fabric.mod.json, mimetype, AndroidManifest.xml, pack.mcmeta, office XML, etc.).
+  Generic payload files (images, videos, large binaries) are never opened.
+"""
 from __future__ import annotations
 
 import json
@@ -10,11 +21,18 @@ import re
 import tarfile
 import zipfile
 
-MAX_NAMES = 60000
+from .perf import MAX_DIR_ENTRIES, MAX_TAR_NAMES, MAX_ZIP_NAMES, max_names_for
+
 # a lone top folder with one of these names is meaningful content, not a wrapper to strip
 KEEP_ROOTS = {"meta-inf", "shaders", "assets", "data", "src", "word", "xl", "ppt", "payload", "lib", "libs", "bin", "mods",
               "plugins", "config", "region", "db", "classes", "docs", "visio", "3d", "customxml", "docprops", "_rels"}
 SKIP_DESCEND = {".git", "node_modules", "__pycache__", ".venv", "venv", ".idea", ".gradle", "build", "target", ".svn"}
+
+from .identity import (
+    is_identity_member,
+    MAX_IDENTITY_READ,
+    MAX_IDENTITY_MEMBER_SIZE,
+)
 
 
 class Listing:
@@ -57,11 +75,30 @@ class Listing:
         return [n for n in self.names if "/" not in n]
 
     def read(self, name: str, limit: int = 262144) -> bytes | None:
+        """Read a member ONLY if it is an identity / type-clarifying mini-file.
+        Generic payload (images, videos, large binaries) is never opened.
+        """
         real = self._lower.get(name.lower())
-        return None if real is None else self._read(real, limit)
+        if real is None:
+            return None
+        if not is_identity_member(real):
+            return None
+        # Prefer caller limit, but never exceed identity safety caps
+        limit = min(limit, MAX_IDENTITY_READ)
+        # If we know member size and it is huge, skip (not a mini-file)
+        try:
+            sz = self.size_of(real)
+            if sz and sz > MAX_IDENTITY_MEMBER_SIZE:
+                return None
+        except Exception:
+            pass
+        return self._read(real, limit)
 
     def _read(self, name: str, limit: int) -> bytes | None:   # pragma: no cover
         return None
+
+    def size_of(self, name: str) -> int:
+        return 0
 
     def text(self, name: str, limit: int = 262144) -> str:
         b = self.read(name, limit)
@@ -93,9 +130,23 @@ class Listing:
 
 
 class ZipListing(Listing):
-    def __init__(self, path: str):
-        self._zf = zipfile.ZipFile(path)
-        infos = self._zf.infolist()[:MAX_NAMES]
+    def __init__(self, path: str, max_names: int | None = None):
+        # Opening the central directory is the most common hang point on
+        # Downloads (AV + large/corrupt zips). Fail fast and let the
+        # caller fall back to extension-only classification.
+        try:
+            self._zf = zipfile.ZipFile(path)
+        except Exception:
+            raise
+        limit = max_names if max_names is not None else MAX_ZIP_NAMES
+        try:
+            infos = self._zf.infolist()[:limit]
+        except Exception:
+            try:
+                self._zf.close()
+            except Exception:
+                pass
+            raise
         self._sizes = {i.filename: i.file_size for i in infos}
         super().__init__([i.filename for i in infos if not i.is_dir()])
 
@@ -117,14 +168,20 @@ class ZipListing(Listing):
 
 
 class TarListing(Listing):
-    def __init__(self, path: str):
+    def __init__(self, path: str, max_names: int | None = None):
         self._tf = tarfile.open(path, "r:*")
+        limit = max_names if max_names is not None else MAX_TAR_NAMES
         names = []
+        self._sizes: dict[str, int] = {}
         for i, m in enumerate(self._tf):
-            if i >= MAX_NAMES // 3:
+            if i >= limit:
                 break
             if m.isfile():
                 names.append(m.name)
+                try:
+                    self._sizes[m.name] = int(m.size or 0)
+                except Exception:
+                    self._sizes[m.name] = 0
         super().__init__(names)
 
     def _read(self, name: str, limit: int):
@@ -133,6 +190,10 @@ class TarListing(Listing):
             return f.read(limit) if f else None
         except Exception:
             return None
+
+    def size_of(self, name: str) -> int:
+        key = self._prefix + self._lower.get(name.lower(), name) if self._prefix else self._lower.get(name.lower(), name)
+        return self._sizes.get(key, self._sizes.get(name, 0))
 
     def close(self):
         try:
@@ -144,7 +205,7 @@ class TarListing(Listing):
 class DirListing(Listing):
     """A real folder, walked shallowly (bounded) without touching its contents."""
 
-    def __init__(self, root: str, max_depth: int = 5, max_entries: int = 6000):
+    def __init__(self, root: str, max_depth: int = 5, max_entries: int = MAX_DIR_ENTRIES):
         self.root = root
         names: list[str] = []
         extra: set[str] = set()
@@ -181,14 +242,38 @@ class DirListing(Listing):
             return None
 
 
-def open_listing(path: str, kind: str | None) -> Listing | None:
+def open_listing(path: str, kind: str | None, size: int | None = None) -> Listing | None:
+    """Open a listing with size-aware name caps. Never extracts to disk.
+
+    Selective: for very large generic zips we still attempt a tiny TOC
+    so identity files can be found, but refuse huge central directories.
+    Content reads are further restricted to identity mini-files only.
+    """
     try:
-        if kind in ("zip", None) and zipfile.is_zipfile(path):
-            return ZipListing(path)
-        if kind in ("tar", "gz", "bz2", "xz") or path.lower().endswith((".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")):
-            if os.path.getsize(path) <= 400 * 1024 * 1024:
-                return TarListing(path)
+        limit = max_names_for(size) if size is not None else MAX_ZIP_NAMES
+        fsize = size if size is not None else None
+        if fsize is None:
+            try:
+                fsize = os.path.getsize(path)
+            except OSError:
+                fsize = 0
+        if fsize > 400 * 1024 * 1024:
+            return None
+        # Prefer zip when magic says zip OR when extension is zip-like and file is zip
+        if kind in ("zip", None) or (kind is None and path.lower().endswith(
+                (".zip", ".jar", ".war", ".ear", ".apk", ".docx", ".xlsx", ".pptx",
+                 ".odt", ".ods", ".odp", ".epub", ".cbz", ".whl", ".nupkg", ".vsix",
+                 ".xpi", ".crx", ".mcpack", ".mrpack", ".aab", ".ipa"))):
+            if zipfile.is_zipfile(path):
+                return ZipListing(path, max_names=limit)
+        if kind in ("tar", "gz", "bz2", "xz") or path.lower().endswith(
+                (".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tar.xz")):
+            if fsize <= 200 * 1024 * 1024:
+                return TarListing(path, max_names=min(limit, MAX_TAR_NAMES))
+    except (OSError, MemoryError, zipfile.BadZipFile, tarfile.TarError):
+        return None
     except Exception:
+        # Never let a pathological archive hang or crash the engine
         return None
     return None
 
