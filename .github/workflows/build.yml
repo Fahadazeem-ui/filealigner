@@ -12,7 +12,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Write glass UI hex parts
-        run: python scripts_write_ui.py
+        run: python boot_write_ui.py
       - name: Install deps
         run: pip install pyinstaller pywebview
       - name: Verify glass UI
