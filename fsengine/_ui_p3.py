@@ -1,0 +1,23 @@
+_UI_PART = "".join([
+    "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"
+])
