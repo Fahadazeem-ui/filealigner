@@ -11,10 +11,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Reconstruct full GUI from parts
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          d = Path("fsengine")
+          parts = sorted(d.glob("_src_part*.py.txt"), key=lambda p: int(p.stem.replace("_src_part","").replace(".py","")))
+          print("parts found", len(parts))
+          if len(parts) >= 16:
+              src = "".join(p.read_text(encoding="utf-8") for p in parts)
+              (d / "app_gui_impl.py").write_text(src, encoding="utf-8")
+              print("wrote app_gui_impl.py", len(src))
+          else:
+              print("WARNING: only", len(parts), "parts — GUI may be incomplete")
+          PY
       - name: Install and build
         run: |
           pip install pyinstaller
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine file_sorter.py
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --add-data "fsengine/_src_part*.py.txt;fsengine" file_sorter.py
       - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
