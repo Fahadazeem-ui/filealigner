@@ -18,6 +18,13 @@ export interface ThemeColors {
   glassBorder: string;
   glassShadow: string;
   glassInnerGlow: string;
+  // Aliases used by components (map to glass*)
+  card: string;
+  panel: string;
+  panel2: string;
+  border: string;
+  tree_bg: string;
+  detail_bg: string;
   // Interactive Elements
   accent: string;
   accentGradient: string;
@@ -54,6 +61,12 @@ export const AURORA_NIGHT: ThemeColors = {
   glassBorder: "rgba(255, 255, 255, 0.11)",
   glassShadow: "0 25px 60px -15px rgba(0, 0, 0, 0.65), 0 0 2px rgba(255, 255, 255, 0.08)",
   glassInnerGlow: "inset 0 1px 1px 0 rgba(255, 255, 255, 0.12)",
+  card: "rgba(25, 30, 46, 0.78)",
+  panel: "rgba(22, 26, 40, 0.72)",
+  panel2: "rgba(32, 38, 58, 0.65)",
+  border: "rgba(255, 255, 255, 0.11)",
+  tree_bg: "#161b29",
+  detail_bg: "rgba(17, 21, 33, 0.75)",
   accent: "#6b82c4",
   accentGradient: "linear-gradient(135deg, #6882c8 0%, #866bb8 100%)",
   accent_fg: "#ffffff",
@@ -88,6 +101,12 @@ export const AURORA_WARM: ThemeColors = {
   glassBorder: "rgba(255, 255, 255, 0.75)",
   glassShadow: "0 25px 55px -12px rgba(220, 170, 185, 0.38), 0 0 2px rgba(255, 255, 255, 0.9)",
   glassInnerGlow: "inset 0 1px 2px 0 rgba(255, 255, 255, 0.9)",
+  card: "rgba(255, 255, 255, 0.72)",
+  panel: "rgba(255, 255, 255, 0.62)",
+  panel2: "rgba(253, 246, 241, 0.78)",
+  border: "rgba(255, 255, 255, 0.75)",
+  tree_bg: "#fdf6f1",
+  detail_bg: "rgba(255, 255, 255, 0.85)",
   accent: "#f7928e",
   accentGradient: "linear-gradient(135deg, #f79d97 0%, #e48da5 50%, #b392e2 100%)",
   accent_fg: "#ffffff",
@@ -122,6 +141,12 @@ export const AURORA_COOL: ThemeColors = {
   glassBorder: "rgba(255, 255, 255, 0.8)",
   glassShadow: "0 25px 55px -12px rgba(160, 185, 215, 0.38), 0 0 2px rgba(255, 255, 255, 0.9)",
   glassInnerGlow: "inset 0 1px 2px 0 rgba(255, 255, 255, 0.95)",
+  card: "rgba(255, 255, 255, 0.75)",
+  panel: "rgba(255, 255, 255, 0.65)",
+  panel2: "rgba(240, 246, 252, 0.8)",
+  border: "rgba(255, 255, 255, 0.8)",
+  tree_bg: "#f0f6fc",
+  detail_bg: "rgba(255, 255, 255, 0.9)",
   accent: "#6b8cae",
   accentGradient: "linear-gradient(135deg, #7496be 0%, #7db9ae 50%, #958dc7 100%)",
   accent_fg: "#ffffff",
