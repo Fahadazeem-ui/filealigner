@@ -101,7 +101,8 @@ input:focus,select:focus{border-color:var(--accent)}
       <div class="card">
         <h2 id="previewHead">FROM → TO</h2>
         <div id="preview"></div>
-        <div class="status" id="status">Ready</div>
+        <div class="status" id="status">Ready — Browse a real folder, then Run</div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="btnApply" style="display:none" onclick="applySort()">Apply moves</button></div>
       </div>
     </div>
   </section>
@@ -134,6 +135,7 @@ function setMode(m){
   document.getElementById('typeChips').style.display=m==='search'?'flex':'none';
   document.getElementById('previewHead').textContent=m==='search'?'Results':m==='cleanup'?'Versions':'FROM → TO';
   document.getElementById('preview').innerHTML='';
+  document.getElementById('btnApply').style.display='none';
   st('Ready');
 }
 function toggleChip(el){const t=el.dataset.t;if(chips.has(t)){chips.delete(t);el.classList.remove('on')}else{chips.add(t);el.classList.add('on')}}
@@ -159,9 +161,11 @@ async function runAction(){
 }
 function renderSort(res){
   const el=document.getElementById('preview');
-  if(!res||!res.items||!res.items.length){el.innerHTML='<div class="status">Nothing to move</div>';st('0 items');return}
+  if(res&&res.error){el.innerHTML='<div class="status">'+esc(res.error)+'</div>';st(res.error);document.getElementById('btnApply').style.display='none';return}
+  if(!res||!res.items||!res.items.length){el.innerHTML='<div class="status">Nothing to move</div>';st('0 items');document.getElementById('btnApply').style.display='none';return}
   el.innerHTML=res.items.map(it=>`<div class="preview-row"><div class="from">${esc(it.src||it.name||'')}</div><div class="arrow">→</div><div class="to">${esc(it.dest||it.to||'')}</div></div>`).join('');
   st(res.items.length+' items');
+  document.getElementById('btnApply').style.display=res.items.length?'':'none';
 }
 function renderSearch(res){
   const el=document.getElementById('preview');
@@ -179,7 +183,16 @@ function renderCleanup(res){
   el.innerHTML=groups.map(g=>`<div class="card" style="margin-bottom:8px"><strong>${esc(g.base||'')}</strong><div class="status">${(g.files||[]).map(f=>esc(f)).join('<br/>')}</div></div>`).join('');
   st(groups.length+' groups');
 }
-function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&','<':'<','>':'>','"':'"',"'":'&#39;'}[c]))}
+async function applySort(){
+  try{
+    if(!window.pywebview||!window.pywebview.api){st('Desktop only');return}
+    st('Moving…');
+    const r=await window.pywebview.api.sort_apply();
+    st('Moved '+(r&&r.moved||0)+', failed '+(r&&r.failed||0));
+    document.getElementById('btnApply').style.display='none';
+  }catch(e){st('Apply error: '+e)}
+}
 function openSettings(){document.getElementById('settingsModal').classList.add('open');loadSettingsForm()}
 function closeSettings(){document.getElementById('settingsModal').classList.remove('open')}
 function setTab(el){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t===el));loadSettingsForm(el.dataset.tab)}
@@ -187,7 +200,7 @@ async function loadSettingsForm(tab){
   tab=tab||'appearance';
   try{if(window.pywebview&&window.pywebview.api)settings=await window.pywebview.api.get_settings()||{}}catch(e){}
   const body=document.getElementById('settingsBody');
-  const a=settings.appearance||{}, i=settings.interaction||{}, s=settings.sort||{}, se=settings.search||{}, p=settings.performance||{}, c=settings.cleanup||{};
+  const a=settings.appearance||{}, i=settings.interaction||{}, se=settings.search||{}, p=settings.performance||{}, c=settings.cleanup||{};
   if(tab==='appearance'){
     body.innerHTML=`<div class="field"><label>Theme</label><select id="s_theme"><option value="aurora_night">Aurora Night</option><option value="aurora_cool">Aurora Cool</option><option value="aurora_warm">Aurora Warm</option></select></div>
     <div class="field"><label>GUI scale %</label><input id="s_scale" type="number" min="75" max="150" value="${a.gui_scale||100}"/></div>
@@ -234,7 +247,6 @@ function applyScale(pct){
 }
 window.addEventListener('pywebviewready',async()=>{
   try{if(window.pywebview&&window.pywebview.api){settings=await window.pywebview.api.get_settings()||{}; applyTheme((settings.appearance||{}).theme); applyScale((settings.appearance||{}).gui_scale)}}catch(e){}
-  st('Ready');
+  st('Ready — live desktop engine');
 });
-window.groups=groups; window.toggleSort=toggleSort;
 </script></body></html>
