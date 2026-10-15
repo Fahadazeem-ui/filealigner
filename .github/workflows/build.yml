@@ -20,37 +20,19 @@ jobs:
           pip install pyinstaller pywebview pythonnet clr-loader bottle proxy_tools
           pip install pillow filetype || true
 
-      - name: Materialize glass UI + verify
+      - name: Rebuild glass UI from source (always)
         shell: bash
         run: |
           python - <<'PY'
-          import sys, zlib, pathlib, base64
+          import sys, zlib, pathlib
           src = pathlib.Path("fsengine/ui/index.html")
-          html = None
-          if src.is_file():
-              html = src.read_text(encoding="utf-8")
-              print("using committed fsengine/ui/index.html", len(html))
-          if not html or "FileSorter" not in html or "backdrop-filter" not in html:
-              parts = []
-              for i in range(20):
-                  p = pathlib.Path(f"fsengine/_idx{i}.py")
-                  if not p.is_file():
-                      break
-                  t = p.read_text(encoding="utf-8")
-                  parts.append(t.split("'", 1)[1].rsplit("'", 1)[0])
-              if parts:
-                  try:
-                      html = zlib.decompress(base64.b64decode("".join(parts))).decode("utf-8")
-                      pathlib.Path("fsengine/ui").mkdir(parents=True, exist_ok=True)
-                      pathlib.Path("fsengine/ui/index.html").write_text(html, encoding="utf-8")
-                      print("materialized from _idx", len(parts), len(html))
-                  except Exception as e:
-                      print("idx decompress failed:", e)
-          if not html or "FileSorter" not in html or "backdrop-filter" not in html:
-              print("FATAL: no glass UI")
+          if not src.is_file():
+              print("FATAL: fsengine/ui/index.html missing")
               sys.exit(1)
-          pathlib.Path("fsengine/ui").mkdir(parents=True, exist_ok=True)
-          pathlib.Path("fsengine/ui/index.html").write_text(html, encoding="utf-8")
+          html = src.read_text(encoding="utf-8")
+          if "backdrop-filter" not in html or "FileSorter" not in html:
+              print("FATAL: index.html missing glass markers")
+              sys.exit(1)
           h = zlib.compress(html.encode("utf-8"), 9).hex()
           n = 10
           chunk = (len(h) + n - 1) // n
@@ -58,9 +40,10 @@ jobs:
               part = h[i * chunk : (i + 1) * chunk]
               pathlib.Path(f"fsengine/_uh{i}.py").write_text(f"_P = '{part}'\n", encoding="utf-8")
           pathlib.Path("fsengine/ui_html.py").write_text(
+              '"""Glass UI — hex parts + source fallback."""\n'
               "from __future__ import annotations\n"
-              "import zlib\nfrom pathlib import Path\n"
-              "def _load_from_hex():\n"
+              "import zlib\nfrom pathlib import Path\n\n"
+              "def _load_from_hex() -> str:\n"
               "    from fsengine._uh0 import _P as p0\n"
               "    from fsengine._uh1 import _P as p1\n"
               "    from fsengine._uh2 import _P as p2\n"
@@ -71,20 +54,21 @@ jobs:
               "    from fsengine._uh7 import _P as p7\n"
               "    from fsengine._uh8 import _P as p8\n"
               "    from fsengine._uh9 import _P as p9\n"
-              "    return zlib.decompress(bytes.fromhex(p0+p1+p2+p3+p4+p5+p6+p7+p8+p9)).decode()\n"
-              "def _load_from_file():\n"
+              "    return zlib.decompress(bytes.fromhex(p0+p1+p2+p3+p4+p5+p6+p7+p8+p9)).decode('utf-8')\n\n"
+              "def _load_from_file() -> str:\n"
               "    p = Path(__file__).resolve().parent / 'ui' / 'index.html'\n"
-              "    return p.read_text(encoding='utf-8')\n"
-              "def get_html():\n"
+              "    if p.is_file(): return p.read_text(encoding='utf-8')\n"
+              "    raise FileNotFoundError('index.html missing')\n\n"
+              "def get_html() -> str:\n"
               "    try:\n"
-              "        h = _load_from_hex()\n"
-              "        if 'backdrop-filter' in h and 'FileSorter' in h: return h\n"
+              "        html = _load_from_hex()\n"
+              "        if 'backdrop-filter' in html and 'FileSorter' in html: return html\n"
               "    except Exception: pass\n"
-              "    return _load_from_file()\n"
+              "    return _load_from_file()\n\n"
               "try:\n"
               "    _HTML = get_html()\n"
-              "except Exception:\n"
-              "    _HTML = '<html><body>FileSorter</body></html>'\n",
+              "except Exception as _e:\n"
+              "    _HTML = '<html><body>FileSorter UI missing</body></html>'\n",
               encoding="utf-8",
           )
           for k in list(sys.modules):
@@ -93,15 +77,15 @@ jobs:
           from fsengine.ui_html import _HTML
           assert "backdrop-filter" in _HTML and "FileSorter" in _HTML
           print("glass UI OK", len(_HTML))
+          try:
+              from fsengine.listing import is_identity_member
+              assert is_identity_member("mimetype")
+              print("listing OK")
+          except Exception as e:
+              print("listing warn:", e)
           from fsengine.settings import DEFAULTS, scale_factor
           assert "appearance" in DEFAULTS
           print("settings OK", scale_factor())
-          for mod in ("fsengine.glass_app", "sorter_core", "fsengine.classify", "fsengine.listing"):
-              try:
-                  __import__(mod)
-                  print("import OK", mod)
-              except Exception as e:
-                  print("import WARN", mod, e)
           print("VERIFY PASS")
           PY
 
@@ -146,8 +130,8 @@ jobs:
       - name: Build installer
         shell: cmd
         run: |
-          if exist "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" (
-            "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe" installer\\FileSorter.iss
+          if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss
           ) else (
             echo no inno
           )

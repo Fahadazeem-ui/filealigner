@@ -7,10 +7,47 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     user-select: none;
     -webkit-user-select: none;
+    overflow: hidden;
   }
 }
 
-/* Subtle Aurora scrollbar */
+/* Custom soft glass styles */
+.glass-container {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+.glass-pill {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-pill:hover {
+  transform: translateY(-1px);
+}
+
+/* Ambient glow animations */
+@keyframes auroraBloom {
+  0% {
+    transform: scale(1) translate(0px, 0px);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.12) translate(15px, -15px);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(1) translate(0px, 0px);
+    opacity: 0.7;
+  }
+}
+
+.animate-aurora {
+  animation: auroraBloom 14s ease-in-out infinite alternate;
+}
+
+/* Custom soft scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -21,10 +58,10 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(150, 150, 150, 0.3);
-  border-radius: 4px;
+  background: rgba(140, 150, 180, 0.25);
+  border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(150, 150, 150, 0.5);
+  background: rgba(140, 150, 180, 0.45);
 }

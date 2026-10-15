@@ -1,62 +1,51 @@
-"""FileSorter 5.0 – Glass UI (pywebview) + content-aware Sort / Search / Cleanup.
+"""FileSorter 5.0 – content-aware Sort + Search.
 
-  python file_sorter.py                       -> Glass GUI (default)
-  python file_sorter.py PATH [--apply] [--audit]
+  python file_sorter.py                       -> GUI
+  python file_sorter.py PATH [--apply] [--audit] [--explain]
   python file_sorter.py --undo
-  python file_sorter.py --classic             -> Tk fallback
 """
 from __future__ import annotations
+import os
 import sys
+import traceback
+
+import sorter_core  # noqa: F401  (explicit import so PyInstaller always bundles it)
+from fsengine.app_gui import cli, gui
 
 
-def main():
-    args = sys.argv[1:]
-
-    if "--classic" in args:
-        args = [a for a in args if a != "--classic"]
-        try:
-            from fsengine.app_gui_impl import cli, gui
-            if args:
-                sys.exit(cli(args) or 0)
-            return gui()
-        except Exception as e:
-            print("Classic GUI unavailable:", e)
-            sys.exit(1)
-
-    if args:
-        try:
-            from fsengine.app_gui_impl import cli
-            sys.exit(cli(args) or 0)
-        except Exception:
-            import sorter_core as core
-            if args[0] == "--undo":
-                n, failed = core.undo()
-                print(f"restored {n}")
-                sys.exit(0 if not failed else 1)
-            path = args[0]
-            apply = "--apply" in args
-            res = core.scan(path, recursive="--no-recursive" not in args, mode="sort")
-            print(f"{len(res.items)} to move, {res.in_place} in place, {res.seconds:.1f}s")
-            if not apply:
-                print("Preview only. Add --apply to move.")
-                sys.exit(0)
-            out = core.execute(res, remove_empty=True)
-            print(f"moved {len(out.moved)}, failed {len(out.failed)}")
-            sys.exit(0)
-
+def _report_crash(exc: BaseException) -> None:
+    """A windowed .exe has no console, so show the error and save it to a log file."""
+    text = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    log = None
     try:
-        from fsengine.glass_app import run_glass
-        run_glass()
-    except Exception as e:
-        print("Glass UI unavailable:", e)
-        try:
-            from fsengine.app_gui_impl import gui
-            gui()
-        except Exception as e2:
-            print("GUI unavailable:", e2)
-            print("Install: pip install pywebview")
-            sys.exit(1)
+        d = os.path.join(os.path.expanduser("~"), ".file_sorter")
+        os.makedirs(d, exist_ok=True)
+        log = os.path.join(d, "crash.log")
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(text)
+    except Exception:
+        pass
+    try:
+        if sys.stderr:
+            print(text, file=sys.stderr)
+    except Exception:
+        pass
+    try:
+        import tkinter
+        from tkinter import messagebox
+        r = tkinter.Tk()
+        r.withdraw()
+        messagebox.showerror("FileSorter crashed", f"{exc!r}\n\nDetails saved to:\n{log}\n\n{text[-1500:]}")
+        r.destroy()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 1:
+        sys.exit(cli(sys.argv[1:]))
+    try:
+        gui()
+    except Exception as e:
+        _report_crash(e)
+        sys.exit(1)

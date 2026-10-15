@@ -38,38 +38,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 select-none">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 select-none animate-in fade-in duration-200">
       <div 
-        className="w-full max-w-2xl rounded-xl border shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+        className="w-full max-w-2xl rounded-3xl border glass-container shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
         style={{
-          backgroundColor: theme.bg,
-          borderColor: theme.border,
+          backgroundColor: theme.glassCard,
+          borderColor: theme.glassBorder,
           color: theme.fg,
         }}
       >
         {/* Modal Header */}
         <div 
-          className="px-5 py-3 border-b flex items-center justify-between"
-          style={{ backgroundColor: theme.panel, borderColor: theme.border }}
+          className="px-6 py-4 border-b flex items-center justify-between"
+          style={{ backgroundColor: theme.glassPanel2, borderColor: theme.glassBorder }}
         >
-          <div className="flex items-center gap-2">
-            <Sliders className="w-4 h-4" style={{ color: theme.accent }} />
-            <h3 className="font-bold text-sm tracking-tight">FileSorter 5.0 Settings</h3>
+          <div className="flex items-center gap-2.5">
+            <div 
+              className="w-7 h-7 rounded-xl flex items-center justify-center shadow-xs"
+              style={{ background: theme.accentGradient, color: theme.accent_fg }}
+            >
+              <Sliders className="w-3.5 h-3.5" />
+            </div>
+            <h3 className="font-bold text-sm tracking-tight">Preferences &amp; Engine Settings</h3>
           </div>
           <button
             onClick={onClose}
-            className="p-1 rounded-md opacity-60 hover:opacity-100 transition-opacity"
+            className="p-1.5 rounded-full opacity-60 hover:opacity-100 transition-opacity"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Modal Body: Tabs Header + Content */}
+        {/* Modal Body */}
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Tabs bar */}
           <div 
-            className="flex items-center gap-1 px-4 pt-2 border-b overflow-x-auto"
-            style={{ backgroundColor: theme.bg2, borderColor: theme.border }}
+            className="flex items-center gap-1.5 px-5 pt-3 border-b overflow-x-auto"
+            style={{ backgroundColor: theme.glassPanel, borderColor: theme.glassBorder }}
           >
             {[
               { id: 'appearance', label: 'Appearance', icon: Palette },
@@ -85,10 +90,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <button
                   key={t.id}
                   onClick={() => setActiveTab(t.id as any)}
-                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium border-b-2 transition-all ${
-                    isActive ? 'font-bold border-current' : 'border-transparent opacity-70 hover:opacity-100'
+                  className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-full transition-all ${
+                    isActive ? 'shadow-xs font-bold' : 'opacity-70 hover:opacity-100'
                   }`}
                   style={{
+                    backgroundColor: isActive ? theme.select : 'transparent',
                     color: isActive ? theme.accent : theme.fg,
                   }}
                 >
@@ -100,35 +106,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </div>
 
           {/* Tab Content Panes */}
-          <div className="p-5 overflow-y-auto space-y-5 text-xs">
+          <div className="p-6 overflow-y-auto space-y-5 text-xs">
             {/* Appearance Tab */}
             {activeTab === 'appearance' && (
               <div className="space-y-4">
                 <div>
-                  <label className="font-semibold block mb-2 opacity-80">
-                    Theme (Soft Aurora gradients — eye-safe, low-contrast)
+                  <label className="font-bold block mb-2 opacity-80">
+                    Theme Palette (Soft blooming Aurora gradients)
                   </label>
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     {Object.entries(THEMES).map(([k, t]) => {
                       const isSel = draft.appearance.theme === k;
                       return (
                         <div
                           key={k}
                           onClick={() => setDraft(prev => ({ ...prev, appearance: { ...prev.appearance, theme: k as any } }))}
-                          className={`p-3 rounded-lg border cursor-pointer transition-all ${
-                            isSel ? 'ring-2 font-bold shadow-sm' : 'hover:opacity-90'
+                          className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                            isSel ? 'ring-2 font-bold shadow-md scale-102' : 'hover:opacity-90'
                           }`}
                           style={{
-                            backgroundColor: t.card,
-                            borderColor: isSel ? theme.accent : theme.border,
+                            backgroundColor: t.glassPanel2,
+                            borderColor: isSel ? theme.accent : theme.glassBorder,
                             color: t.fg,
                           }}
                         >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="text-xs font-semibold">{t.label}</span>
-                            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: t.accent }} />
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-bold">{t.label}</span>
+                            <div className="w-3 h-3 rounded-full" style={{ background: t.accentGradient }} />
                           </div>
-                          <div className="flex gap-1 h-3 rounded overflow-hidden">
+                          <div className="flex gap-1 h-3.5 rounded-full overflow-hidden border" style={{ borderColor: t.glassBorder }}>
                             <div className="flex-1" style={{ backgroundColor: t.bg }} />
                             <div className="flex-1" style={{ backgroundColor: t.accent }} />
                             <div className="flex-1" style={{ backgroundColor: t.ok }} />
@@ -141,8 +147,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* GUI Scale */}
                 <div>
-                  <div className="flex justify-between font-semibold mb-1">
-                    <span>GUI Scale</span>
+                  <div className="flex justify-between font-bold mb-1">
+                    <span>GUI Scale Factor</span>
                     <span className="font-mono font-bold" style={{ color: theme.accent }}>
                       {draft.appearance.gui_scale}%
                     </span>
@@ -160,14 +166,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }))}
                       className="flex-1 accent-blue-600"
                     />
-                    <div className="flex gap-1">
+                    <div className="flex gap-1.5">
                       {[75, 100, 125, 150].map(pct => (
                         <button
                           key={pct}
                           type="button"
                           onClick={() => setDraft(prev => ({ ...prev, appearance: { ...prev.appearance, gui_scale: pct } }))}
-                          className="px-2 py-0.5 rounded border text-[11px]"
-                          style={{ backgroundColor: theme.card, borderColor: theme.border }}
+                          className="px-2.5 py-1 rounded-full border text-[11px] font-semibold"
+                          style={{ backgroundColor: theme.button, borderColor: theme.glassBorder }}
                         >
                           {pct}%
                         </button>
@@ -178,15 +184,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Density */}
                 <div>
-                  <label className="font-semibold block mb-1 opacity-80">Layout Density</label>
+                  <label className="font-bold block mb-1 opacity-80">Layout Density</label>
                   <select
                     value={draft.appearance.density}
                     onChange={e => setDraft(prev => ({
                       ...prev,
                       appearance: { ...prev.appearance, density: e.target.value as any }
                     }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs outline-none"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
+                    className="w-full px-3 py-2 rounded-xl border text-xs outline-none"
+                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder, color: theme.fg }}
                   >
                     <option value="comfortable">Comfortable (Balanced spacing)</option>
                     <option value="compact">Compact (More items in view)</option>
@@ -196,7 +202,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                 {/* Animations */}
                 <div>
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium">
                     <input
                       type="checkbox"
                       checked={draft.appearance.animations}
@@ -206,7 +212,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }))}
                       className="rounded accent-blue-600"
                     />
-                    <span>Subtle animations & smooth progress transitions</span>
+                    <span>Subtle ambient aurora animations &amp; smooth progress blooms</span>
                   </label>
                 </div>
               </div>
@@ -216,7 +222,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === 'interaction' && (
               <div className="space-y-4">
                 <div>
-                  <div className="flex justify-between font-semibold mb-1">
+                  <div className="flex justify-between font-bold mb-1">
                     <span>Scroll Sensitivity</span>
                     <span className="font-mono">{draft.interaction.scroll_sensitivity}x</span>
                   </div>
@@ -235,15 +241,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1 opacity-80">Confirm Before Sort</label>
+                  <label className="font-bold block mb-1 opacity-80">Confirm Before Move / Organize</label>
                   <select
                     value={draft.interaction.confirm_sort}
                     onChange={e => setDraft(prev => ({
                       ...prev,
                       interaction: { ...prev.interaction, confirm_sort: e.target.value as any }
                     }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs outline-none"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
+                    className="w-full px-3 py-2 rounded-xl border text-xs outline-none"
+                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder, color: theme.fg }}
                   >
                     <option value="many">When sorting many items (&gt; 50 files)</option>
                     <option value="always">Always ask confirmation</option>
@@ -252,7 +258,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="flex items-center gap-2 cursor-pointer">
+                  <label className="flex items-center gap-2 cursor-pointer font-medium">
                     <input
                       type="checkbox"
                       checked={draft.interaction.confirm_undo}
@@ -262,7 +268,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       }))}
                       className="rounded accent-blue-600"
                     />
-                    <span>Confirm before executing Undo</span>
+                    <span>Confirm before executing Undo restore</span>
                   </label>
                 </div>
               </div>
@@ -272,22 +278,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             {activeTab === 'sort' && (
               <div className="space-y-4">
                 <div>
-                  <label className="font-semibold block mb-1 opacity-80">Default Mode</label>
+                  <label className="font-bold block mb-1 opacity-80">Default Mode</label>
                   <select
                     value={draft.sort.default_mode}
                     onChange={e => setDraft(prev => ({
                       ...prev,
                       sort: { ...prev.sort, default_mode: e.target.value as any }
                     }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs outline-none"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
+                    className="w-full px-3 py-2 rounded-xl border text-xs outline-none"
+                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder, color: theme.fg }}
                   >
                     <option value="sort">Full Sort</option>
-                    <option value="audit">Audit Only (re-check already categorized folders)</option>
+                    <option value="audit">Audit Only (re-check existing taxonomy folders)</option>
                   </select>
                 </div>
 
-                <div className="space-y-2">
+                <div className="space-y-2.5 font-medium">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -316,15 +322,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1 opacity-80">After Preview, Select</label>
+                  <label className="font-bold block mb-1 opacity-80">After Preview, Select</label>
                   <select
                     value={draft.sort.auto_select}
                     onChange={e => setDraft(prev => ({
                       ...prev,
                       sort: { ...prev.sort, auto_select: e.target.value as any }
                     }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs outline-none"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
+                    className="w-full px-3 py-2 rounded-xl border text-xs outline-none"
+                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder, color: theme.fg }}
                   >
                     <option value="all">All items</option>
                     <option value="sure">Sure only (&gt;= 85% confidence)</option>
@@ -336,8 +342,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* Search Tab */}
             {activeTab === 'search' && (
-              <div className="space-y-4">
-                <div className="space-y-2">
+              <div className="space-y-4 font-medium">
+                <div className="space-y-2.5">
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="checkbox"
@@ -366,7 +372,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <div>
-                  <label className="font-semibold block mb-1 opacity-80">Result Limit</label>
+                  <label className="font-bold block mb-1 opacity-80">Result Limit</label>
                   <input
                     type="number"
                     min="100"
@@ -376,8 +382,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       ...prev,
                       search: { ...prev.search, result_limit: parseInt(e.target.value) || 8000 }
                     }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs font-mono"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
+                    className="w-full px-3 py-2 rounded-xl border text-xs font-mono shadow-inner"
+                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder, color: theme.fg }}
                   />
                 </div>
               </div>
@@ -385,7 +391,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {/* Performance Tab */}
             {activeTab === 'performance' && (
-              <div className="space-y-4">
+              <div className="space-y-4 font-medium">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -411,69 +417,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   />
                   <span>Use classification fingerprint cache</span>
                 </label>
-
-                <div>
-                  <label className="font-semibold block mb-1 opacity-80">Worker Concurrency</label>
-                  <select
-                    value={draft.performance.workers}
-                    onChange={e => setDraft(prev => ({
-                      ...prev,
-                      performance: { ...prev.performance, workers: e.target.value }
-                    }))}
-                    className="w-full px-3 py-1.5 rounded border text-xs outline-none"
-                    style={{ backgroundColor: theme.entry_bg, borderColor: theme.border, color: theme.fg }}
-                  >
-                    <option value="auto">Auto (Adaptive based on file count)</option>
-                    <option value="2">2 workers (Conservative)</option>
-                    <option value="4">4 workers (Standard)</option>
-                    <option value="6">6 workers (High performance)</option>
-                  </select>
-                </div>
               </div>
             )}
 
             {/* About Tab */}
             {activeTab === 'about' && (
-              <div className="space-y-3">
-                <div className="p-3 rounded-lg border leading-relaxed" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
+              <div className="space-y-3.5">
+                <div className="p-4 rounded-2xl border leading-relaxed" style={{ backgroundColor: theme.glassPanel, borderColor: theme.glassBorder }}>
                   <h4 className="font-bold text-sm mb-1">FileSorter 5.0 (Aurora Engine)</h4>
                   <p className="opacity-80">
-                    Content-aware Sort, Search, and Duplicate Cleanup. Eliminates arbitrary "Others" dumping; assigns evidence trails, confidence levels, and supports custom regex/extension rules.
-                  </p>
-                  <p className="mt-2 text-[11px] font-mono opacity-60">
-                    Configuration synced with browser local storage &amp; custom rules registry.
+                    Content-aware Sort, Search, and Duplicate Cleanup with soft blooming Aurora glassmorphism.
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={handleResetDefaults}
-                  className="px-3 py-1.5 rounded border text-xs font-medium flex items-center gap-1.5 hover:bg-red-500/10 text-red-500 border-red-500/30 transition-colors"
+                  className="px-4 py-2 rounded-full border text-xs font-semibold flex items-center gap-1.5 hover:bg-red-500/10 text-red-500 border-red-500/30 transition-colors"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  Reset all settings to defaults
+                  <span>Reset all settings to defaults</span>
                 </button>
               </div>
             )}
           </div>
         </div>
 
-        {/* Modal Footer Buttons */}
+        {/* Modal Footer */}
         <div 
-          className="px-5 py-3 border-t flex items-center justify-end gap-2"
-          style={{ backgroundColor: theme.panel, borderColor: theme.border }}
+          className="px-6 py-3.5 border-t flex items-center justify-end gap-2.5"
+          style={{ backgroundColor: theme.glassPanel2, borderColor: theme.glassBorder }}
         >
           <button
             onClick={onClose}
-            className="px-4 py-1.5 rounded-md text-xs font-medium border"
-            style={{ backgroundColor: theme.card, borderColor: theme.border, color: theme.fg }}
+            className="px-4 py-2 rounded-full text-xs font-semibold border cursor-pointer"
+            style={{ backgroundColor: theme.button, borderColor: theme.glassBorder, color: theme.fg }}
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
-            className="px-4 py-1.5 rounded-md text-xs font-semibold shadow-xs"
-            style={{ backgroundColor: theme.accent, color: theme.accent_fg }}
+            className="px-5 py-2 rounded-full text-xs font-bold shadow-md cursor-pointer transition-all active:scale-95"
+            style={{ background: theme.accentGradient, color: theme.accent_fg, boxShadow: theme.accentGlow }}
           >
             Save Settings
           </button>

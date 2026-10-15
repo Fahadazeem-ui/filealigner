@@ -1,6 +1,7 @@
 import { Verdict, ConfidenceLevel, UserCustomRule } from '../types';
 import { EXT_MAP, DOC_KINDS, AMBIGUOUS_EXT } from './taxonomy';
 import { sniffBytes, sniffBlob } from './magic';
+import JSZip from 'jszip';
 
 export function getConfidenceLevel(conf: number): ConfidenceLevel {
   if (conf >= 0.85) return 'Sure';
@@ -83,7 +84,7 @@ export interface ClassifyInput {
 }
 
 export async function classifyItem(input: ClassifyInput): Promise<Verdict> {
-  const { name, size = 0, is_dir = false, entries = [], textContent = "", rawBytes, blob, userRules = [] } = input;
+  let { name, size = 0, is_dir = false, entries = [], textContent = "", rawBytes, blob, userRules = [] } = input;
   const lowerName = name.toLowerCase();
 
   // Extension parsing (.tar.gz, .part, etc.)
@@ -199,6 +200,93 @@ export async function classifyItem(input: ClassifyInput): Promise<Verdict> {
     sniff = await sniffBlob(blob);
   }
 
+  // Real Archive Container Deep Look (using JSZip)
+  if (blob && (ext === '.jar' || ext === '.zip' || ext === '.mcpack' || ext === '.mcaddon')) {
+    try {
+      const zip = await JSZip.loadAsync(blob);
+      const fileKeys = Object.keys(zip.files).map(f => f.toLowerCase());
+
+      if (fileKeys.includes('fabric.mod.json')) {
+        let modInfo = 'Fabric Mod';
+        try {
+          const rawMeta = await zip.file('fabric.mod.json')?.async('text');
+          if (rawMeta) {
+            const j = JSON.parse(rawMeta);
+            if (j.name || j.id) modInfo = `Fabric mod '${j.name || j.id}' ${j.version || ''}`.trim();
+          }
+        } catch {}
+        return makeVerdict(
+          ["Games", "Minecraft", "Mods", "Fabric"],
+          modInfo,
+          0.98,
+          ["Deep archive look verified fabric.mod.json descriptor"]
+        );
+      }
+
+      if (fileKeys.some(f => f.includes('neoforge.mods.toml'))) {
+        return makeVerdict(
+          ["Games", "Minecraft", "Mods", "NeoForge"],
+          `NeoForge mod (${name})`,
+          0.98,
+          ["Deep archive look verified META-INF/neoforge.mods.toml"]
+        );
+      }
+
+      if (fileKeys.some(f => f.includes('mods.toml')) || fileKeys.includes('mcmod.info')) {
+        return makeVerdict(
+          ["Games", "Minecraft", "Mods", "Forge"],
+          `Forge mod (${name})`,
+          0.98,
+          ["Deep archive look verified Forge mod descriptor"]
+        );
+      }
+
+      if (fileKeys.includes('plugin.yml') || fileKeys.includes('paper-plugin.yml')) {
+        return makeVerdict(
+          ["Games", "Minecraft", "Plugins", "Bukkit-Spigot-Paper"],
+          `Minecraft Server Plugin (${name})`,
+          0.98,
+          ["Deep archive look verified plugin.yml descriptor"]
+        );
+      }
+
+      if (fileKeys.includes('pack.mcmeta')) {
+        if (fileKeys.some(f => f.includes('shaders/'))) {
+          return makeVerdict(
+            ["Games", "Minecraft", "Shaders"],
+            `Minecraft Shaderpack (${name})`,
+            0.98,
+            ["Deep archive look verified pack.mcmeta + shaders/ directory"]
+          );
+        }
+        return makeVerdict(
+          ["Games", "Minecraft", "Resourcepacks"],
+          `Minecraft Resourcepack (${name})`,
+          0.98,
+          ["Deep archive look verified pack.mcmeta descriptor"]
+        );
+      }
+
+      if (fileKeys.includes('package.json')) {
+        return makeVerdict(
+          ["Development", "Projects"],
+          `Node.js project archive (${name})`,
+          0.95,
+          ["Deep archive look verified package.json in archive root"]
+        );
+      }
+    } catch {
+      // Not a valid zip or corrupted
+    }
+  }
+
+  // Text keyword extraction for real files
+  if (blob && !textContent && (['.txt', '.md', '.csv', '.json', '.html', '.css', '.pdf', '.docx', '.log'].includes(ext) || size < 200000)) {
+    try {
+      textContent = await blob.slice(0, 10000).text();
+    } catch {}
+  }
+
   // Magic mismatch checking (crucial for security & file integrity!)
   if (sniff) {
     if (sniff.kind === 'pdf' && ext !== '.pdf') {
@@ -229,7 +317,7 @@ export async function classifyItem(input: ClassifyInput): Promise<Verdict> {
     }
   }
 
-  // 4. Minecraft Specific Mod & Pack detection
+  // 4. Minecraft Specific Mod & Pack detection by filename
   if (ext === '.jar') {
     if (/fabric/i.test(lowerName)) {
       return makeVerdict(

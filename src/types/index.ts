@@ -94,6 +94,8 @@ export interface UserCustomRule {
   type: 'extension' | 'regex';
   pattern: string;
   destination: string[];
+  dest?: string[];
+  active?: boolean;
   description?: string;
 }
 

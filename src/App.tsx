@@ -6,12 +6,13 @@ import { DuplicatesView } from './components/DuplicatesView';
 import { RulesView } from './components/RulesView';
 import { SettingsModal } from './components/SettingsModal';
 import { UndoModal } from './components/UndoModal';
-import { getTheme } from './engine/themes';
+import { getTheme, THEMES } from './engine/themes';
 import { loadSettings, saveSettings, loadUserRules, saveUserRules } from './engine/settings';
 import { loadJournals, saveJournal, markJournalUndone } from './engine/journal';
 import { generateSampleFiles } from './engine/sampleFiles';
 import { classifyItem } from './engine/classifier';
 import { FileItem, JournalRecord, AppSettings, UserCustomRule } from './types';
+import { Sparkles, CheckCircle2 } from 'lucide-react';
 
 export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -22,6 +23,10 @@ export const App: React.FC = () => {
   const [scopePath, setScopePath] = useState<string>('C:/Users/User/Downloads');
   const [destPath, setDestPath] = useState<string>('');
   
+  // Detailing options: List vs Grid view & Toggleable Side Info Inspector
+  const [viewLayout, setViewLayout] = useState<'list' | 'grid'>('list');
+  const [showInspector, setShowInspector] = useState(true);
+
   // Modals
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUndoOpen, setIsUndoOpen] = useState(false);
@@ -34,12 +39,10 @@ export const App: React.FC = () => {
 
   const theme = getTheme(settings.appearance.theme);
 
-  // Save rules when changed
   useEffect(() => {
     saveUserRules(userRules);
   }, [userRules]);
 
-  // Save settings when changed
   const handleSaveSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     saveSettings(newSettings);
@@ -50,22 +53,22 @@ export const App: React.FC = () => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage(null);
-    }, 4000);
+    }, 3800);
   };
 
   // Preview runner
   const handlePreview = async (sortMode: 'sort' | 'audit' = 'sort') => {
     setIsLoading(true);
     setProgressPercent(0);
-    setProgressStage('Scanning folder entries...');
+    setProgressStage('Scanning directory entries...');
+
+    await new Promise(r => setTimeout(r, 120));
+    setProgressPercent(35);
+    setProgressStage('Sniffing byte signatures & containers...');
 
     await new Promise(r => setTimeout(r, 150));
-    setProgressPercent(35);
-    setProgressStage('Fingerprinting headers & sniffing magic bytes...');
-
-    await new Promise(r => setTimeout(r, 200));
-    setProgressPercent(65);
-    setProgressStage('Evaluating taxonomy rules & document keywords...');
+    setProgressPercent(70);
+    setProgressStage('Analyzing document keywords & rules...');
 
     const updated: FileItem[] = [];
     for (const it of items) {
@@ -90,12 +93,12 @@ export const App: React.FC = () => {
       });
     }
 
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 120));
     setProgressPercent(100);
-    setProgressStage('Done');
+    setProgressStage('Complete');
     setIsLoading(false);
     setItems(updated);
-    showToast(`Preview completed for ${updated.length} items.`);
+    showToast(`Preview analyzed ${updated.length} items with evidence.`);
   };
 
   // Sort executor
@@ -105,7 +108,7 @@ export const App: React.FC = () => {
     const count = selectedItems.length;
     const confirmType = settings.interaction.confirm_sort;
     if (confirmType === 'always' || (confirmType === 'many' && count > 50)) {
-      if (!confirm(`Are you sure you want to sort and move ${count} selected item(s)?`)) {
+      if (!confirm(`Are you sure you want to organize and move ${count} selected item(s)?`)) {
         return;
       }
     }
@@ -142,7 +145,7 @@ export const App: React.FC = () => {
       return it;
     }));
 
-    showToast(`Successfully organized ${count} item(s)! Undo journal recorded.`);
+    showToast(`Successfully organized ${count} item(s)! Revert available anytime in Undo.`);
   };
 
   // Undo execution
@@ -159,7 +162,6 @@ export const App: React.FC = () => {
       }
     }
 
-    // Revert items
     const reverseMap = new Map(latest.moved.map(([src, dst]) => [dst, src]));
     setItems(prev => prev.map(it => {
       if (reverseMap.has(it.source)) {
@@ -174,7 +176,7 @@ export const App: React.FC = () => {
 
     markJournalUndone(latest.id);
     setJournals(loadJournals());
-    showToast(`Reverted sort run: ${latest.moved.length} item(s) restored.`);
+    showToast(`Reverted run: ${latest.moved.length} item(s) restored.`);
   };
 
   const handleRevertJournal = (journalId: string) => {
@@ -198,7 +200,7 @@ export const App: React.FC = () => {
     showToast(`Journal run restored (${journal.moved.length} items).`);
   };
 
-  // Presets
+  // Load presets
   const handleLoadPreset = (presetName: string) => {
     const samples = generateSampleFiles();
     if (presetName === 'minecraft') {
@@ -217,7 +219,7 @@ export const App: React.FC = () => {
     showToast(`Loaded ${presetName} preset.`);
   };
 
-  // User upload files
+  // Upload custom files
   const handleUploadFiles = async (files: FileList) => {
     const list: FileItem[] = [];
     for (let i = 0; i < files.length; i++) {
@@ -248,7 +250,6 @@ export const App: React.FC = () => {
       setItems(list);
       setScopePath((files[0] as any).webkitRelativePath ? 'Uploaded Folder' : 'Uploaded Files');
       showToast(`Loaded ${list.length} user files. Running preview...`);
-      // Auto preview
       setTimeout(() => {
         handlePreview('sort');
       }, 100);
@@ -258,38 +259,70 @@ export const App: React.FC = () => {
   const handleRemoveDuplicates = (deleteIds: string[]) => {
     const delSet = new Set(deleteIds);
     setItems(prev => prev.filter(it => !delSet.has(it.id)));
-    showToast(`Removed ${deleteIds.length} duplicate file(s).`);
+    showToast(`Cleaned up ${deleteIds.length} duplicate file(s).`);
   };
 
-  // GUI scale calculation (75% to 150%)
+  const handleAddRuleFromItem = (pattern: string, type: 'extension' | 'regex', dest: string[]) => {
+    const newRule: UserCustomRule = {
+      id: `rule-${Date.now()}`,
+      type,
+      pattern,
+      destination: dest,
+      dest,
+      active: true,
+      description: `Rule for ${pattern}`,
+    };
+    const updated = [newRule, ...userRules];
+    setUserRules(updated);
+    saveUserRules(updated);
+    showToast(`Saved custom rule: ${pattern} → ${dest.join('/')}`);
+  };
+
   const scalePct = settings.appearance.gui_scale || 100;
   const zoomFactor = scalePct / 100;
 
   return (
     <div 
-      className="flex flex-col h-screen w-screen overflow-hidden text-sm"
+      className="flex flex-col h-screen w-screen overflow-hidden text-sm relative transition-colors duration-500"
       style={{
-        backgroundColor: theme.bg,
+        background: theme.ambientGradient,
         color: theme.fg,
         zoom: zoomFactor !== 1 ? zoomFactor : undefined,
       }}
     >
-      {/* Toast Notification */}
+      {/* Soft Ambient Blooming Orbs in the Background (Matching Screenshots!) */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div 
+          className="absolute -top-32 -left-32 w-96 h-96 rounded-full blur-3xl opacity-70 animate-aurora"
+          style={{ background: theme.bloomColor1 }}
+        />
+        <div 
+          className="absolute -top-20 right-1/4 w-[32rem] h-[32rem] rounded-full blur-3xl opacity-60 animate-aurora"
+          style={{ background: theme.bloomColor2, animationDelay: '-4s' }}
+        />
+        <div 
+          className="absolute -bottom-32 right-10 w-[36rem] h-[36rem] rounded-full blur-3xl opacity-60 animate-aurora"
+          style={{ background: theme.bloomColor3, animationDelay: '-8s' }}
+        />
+      </div>
+
+      {/* Toast Notification with Soft Glow */}
       {toastMessage && (
         <div 
-          className="fixed bottom-10 right-10 z-50 px-4 py-2 rounded-lg shadow-xl border text-xs font-medium flex items-center gap-2 animate-bounce"
+          className="fixed bottom-12 right-12 z-50 px-5 py-2.5 rounded-full shadow-2xl border text-xs font-semibold flex items-center gap-2.5 animate-in fade-in slide-in-from-bottom-2 duration-200 glass-container"
           style={{
-            backgroundColor: theme.panel,
+            backgroundColor: theme.glassCard,
             borderColor: theme.accent,
+            boxShadow: theme.accentGlow,
             color: theme.fg,
           }}
         >
-          <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.accent }} />
+          <div className="w-2.5 h-2.5 rounded-full animate-pulse" style={{ background: theme.accentGradient }} />
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* Main Top Header */}
+      {/* Main Top Header Navigation */}
       <Header
         mode={mode}
         setMode={setMode}
@@ -303,10 +336,14 @@ export const App: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenUndo={() => setIsUndoOpen(true)}
         undoCount={journals.filter(j => !j.undone).length}
+        viewLayout={viewLayout}
+        setViewLayout={setViewLayout}
+        showInspector={showInspector}
+        setShowInspector={setShowInspector}
       />
 
-      {/* Main View Area */}
-      <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
+      {/* Main Canvas Area */}
+      <main className="flex-1 min-h-0 overflow-hidden flex flex-col z-10">
         {mode === 'sort' && (
           <SortView
             theme={theme}
@@ -322,9 +359,13 @@ export const App: React.FC = () => {
             onUndoLast={handleUndoLast}
             onLoadPreset={handleLoadPreset}
             onUploadFiles={handleUploadFiles}
+            onAddRuleFromItem={handleAddRuleFromItem}
             isLoading={isLoading}
             progressPercent={progressPercent}
             progressStage={progressStage}
+            viewLayout={viewLayout}
+            showInspector={showInspector}
+            setShowInspector={setShowInspector}
           />
         )}
 
@@ -360,10 +401,14 @@ export const App: React.FC = () => {
             onUndoLast={handleUndoLast}
             onLoadPreset={handleLoadPreset}
             onUploadFiles={handleUploadFiles}
+            onAddRuleFromItem={handleAddRuleFromItem}
             isLoading={isLoading}
             progressPercent={progressPercent}
             progressStage={progressStage}
             auditModeOnly={true}
+            viewLayout={viewLayout}
+            showInspector={showInspector}
+            setShowInspector={setShowInspector}
           />
         )}
 

@@ -11,6 +11,7 @@ export interface ThemeColors {
   bg2: string;
   fg: string;
   fg_muted: string;
+  fg_subtle: string;
   // Glass Cards & Panels
   glassCard: string;
   glassPanel: string;
@@ -18,22 +19,31 @@ export interface ThemeColors {
   glassBorder: string;
   glassShadow: string;
   glassInnerGlow: string;
-  // Aliases used by components (map to glass*)
   card: string;
+  cardBg: string;
+  cardBorder: string;
   panel: string;
   panel2: string;
   border: string;
-  tree_bg: string;
-  detail_bg: string;
+  panelBorder: string;
+  sidebarBg: string;
+  sidebarBorder: string;
   // Interactive Elements
   accent: string;
   accentGradient: string;
   accent_fg: string;
   accentGlow: string;
+  pillActiveBg: string;
+  pillActiveFg: string;
+  pillActiveGlow: string;
   button: string;
+  buttonBg: string;
   button_hover: string;
   select: string;
   entry_bg: string;
+  entryBg: string;
+  entryBorder: string;
+  storageGradient: string;
   // Status & Verdicts
   ok: string;          // Sure
   progress: string;
@@ -55,6 +65,7 @@ export const AURORA_NIGHT: ThemeColors = {
   bg2: "#161b29",
   fg: "#e4eaf4",
   fg_muted: "#8c97ad",
+  fg_subtle: "#626f8a",
   glassCard: "rgba(25, 30, 46, 0.78)",
   glassPanel: "rgba(22, 26, 40, 0.72)",
   glassPanel2: "rgba(32, 38, 58, 0.65)",
@@ -62,19 +73,29 @@ export const AURORA_NIGHT: ThemeColors = {
   glassShadow: "0 25px 60px -15px rgba(0, 0, 0, 0.65), 0 0 2px rgba(255, 255, 255, 0.08)",
   glassInnerGlow: "inset 0 1px 1px 0 rgba(255, 255, 255, 0.12)",
   card: "rgba(25, 30, 46, 0.78)",
+  cardBg: "rgba(25, 30, 46, 0.78)",
+  cardBorder: "rgba(255, 255, 255, 0.11)",
   panel: "rgba(22, 26, 40, 0.72)",
   panel2: "rgba(32, 38, 58, 0.65)",
   border: "rgba(255, 255, 255, 0.11)",
-  tree_bg: "#161b29",
-  detail_bg: "rgba(17, 21, 33, 0.75)",
+  panelBorder: "rgba(255, 255, 255, 0.11)",
+  sidebarBg: "rgba(18, 22, 35, 0.85)",
+  sidebarBorder: "rgba(255, 255, 255, 0.08)",
   accent: "#6b82c4",
   accentGradient: "linear-gradient(135deg, #6882c8 0%, #866bb8 100%)",
   accent_fg: "#ffffff",
   accentGlow: "0 6px 20px rgba(107, 130, 196, 0.45)",
+  pillActiveBg: "rgba(107, 130, 196, 0.25)",
+  pillActiveFg: "#ffffff",
+  pillActiveGlow: "0 4px 16px rgba(107, 130, 196, 0.35)",
   button: "rgba(42, 50, 75, 0.7)",
+  buttonBg: "rgba(42, 50, 75, 0.7)",
   button_hover: "rgba(55, 65, 96, 0.85)",
   select: "rgba(107, 130, 196, 0.22)",
   entry_bg: "rgba(17, 21, 33, 0.75)",
+  entryBg: "rgba(17, 21, 33, 0.75)",
+  entryBorder: "rgba(255, 255, 255, 0.10)",
+  storageGradient: "linear-gradient(90deg, #6882c8 0%, #866bb8 100%)",
   ok: "#5ec99b",
   progress: "#6b82c4",
   review: "#e2a958",
@@ -95,6 +116,7 @@ export const AURORA_WARM: ThemeColors = {
   bg2: "#efe7e0",
   fg: "#2e2520",
   fg_muted: "#7c6f66",
+  fg_subtle: "#9c8b82",
   glassCard: "rgba(255, 255, 255, 0.72)",
   glassPanel: "rgba(255, 255, 255, 0.62)",
   glassPanel2: "rgba(253, 246, 241, 0.78)",
@@ -102,19 +124,29 @@ export const AURORA_WARM: ThemeColors = {
   glassShadow: "0 25px 55px -12px rgba(220, 170, 185, 0.38), 0 0 2px rgba(255, 255, 255, 0.9)",
   glassInnerGlow: "inset 0 1px 2px 0 rgba(255, 255, 255, 0.9)",
   card: "rgba(255, 255, 255, 0.72)",
+  cardBg: "rgba(255, 255, 255, 0.72)",
+  cardBorder: "rgba(255, 255, 255, 0.75)",
   panel: "rgba(255, 255, 255, 0.62)",
   panel2: "rgba(253, 246, 241, 0.78)",
   border: "rgba(255, 255, 255, 0.75)",
-  tree_bg: "#fdf6f1",
-  detail_bg: "rgba(255, 255, 255, 0.85)",
+  panelBorder: "rgba(255, 255, 255, 0.75)",
+  sidebarBg: "rgba(255, 248, 243, 0.82)",
+  sidebarBorder: "rgba(220, 195, 210, 0.5)",
   accent: "#f7928e",
   accentGradient: "linear-gradient(135deg, #f79d97 0%, #e48da5 50%, #b392e2 100%)",
   accent_fg: "#ffffff",
   accentGlow: "0 6px 20px rgba(247, 146, 142, 0.42)",
+  pillActiveBg: "rgba(247, 157, 151, 0.25)",
+  pillActiveFg: "#2e2520",
+  pillActiveGlow: "0 4px 16px rgba(247, 146, 142, 0.3)",
   button: "rgba(255, 255, 255, 0.8)",
+  buttonBg: "rgba(255, 255, 255, 0.8)",
   button_hover: "rgba(255, 255, 255, 0.95)",
   select: "rgba(247, 157, 151, 0.22)",
   entry_bg: "rgba(255, 255, 255, 0.75)",
+  entryBg: "rgba(255, 255, 255, 0.75)",
+  entryBorder: "rgba(230, 215, 210, 0.6)",
+  storageGradient: "linear-gradient(90deg, #f79d97 0%, #e48da5 50%, #b392e2 100%)",
   ok: "#4fa876",
   progress: "#f7928e",
   review: "#d98f3b",
@@ -135,6 +167,7 @@ export const AURORA_COOL: ThemeColors = {
   bg2: "#e4ecf4",
   fg: "#222c38",
   fg_muted: "#667485",
+  fg_subtle: "#8092a4",
   glassCard: "rgba(255, 255, 255, 0.75)",
   glassPanel: "rgba(255, 255, 255, 0.65)",
   glassPanel2: "rgba(240, 246, 252, 0.8)",
@@ -142,19 +175,29 @@ export const AURORA_COOL: ThemeColors = {
   glassShadow: "0 25px 55px -12px rgba(160, 185, 215, 0.38), 0 0 2px rgba(255, 255, 255, 0.9)",
   glassInnerGlow: "inset 0 1px 2px 0 rgba(255, 255, 255, 0.95)",
   card: "rgba(255, 255, 255, 0.75)",
+  cardBg: "rgba(255, 255, 255, 0.75)",
+  cardBorder: "rgba(255, 255, 255, 0.8)",
   panel: "rgba(255, 255, 255, 0.65)",
   panel2: "rgba(240, 246, 252, 0.8)",
   border: "rgba(255, 255, 255, 0.8)",
-  tree_bg: "#f0f6fc",
-  detail_bg: "rgba(255, 255, 255, 0.9)",
+  panelBorder: "rgba(255, 255, 255, 0.8)",
+  sidebarBg: "rgba(244, 248, 252, 0.82)",
+  sidebarBorder: "rgba(195, 210, 230, 0.5)",
   accent: "#6b8cae",
   accentGradient: "linear-gradient(135deg, #7496be 0%, #7db9ae 50%, #958dc7 100%)",
   accent_fg: "#ffffff",
   accentGlow: "0 6px 20px rgba(107, 140, 174, 0.4)",
+  pillActiveBg: "rgba(107, 140, 174, 0.22)",
+  pillActiveFg: "#1d2939",
+  pillActiveGlow: "0 4px 16px rgba(107, 140, 174, 0.28)",
   button: "rgba(255, 255, 255, 0.85)",
+  buttonBg: "rgba(255, 255, 255, 0.85)",
   button_hover: "rgba(255, 255, 255, 0.98)",
   select: "rgba(107, 140, 174, 0.22)",
   entry_bg: "rgba(255, 255, 255, 0.8)",
+  entryBg: "rgba(255, 255, 255, 0.8)",
+  entryBorder: "rgba(210, 225, 240, 0.6)",
+  storageGradient: "linear-gradient(90deg, #7496be 0%, #7db9ae 50%, #958dc7 100%)",
   ok: "#45a37e",
   progress: "#6b8cae",
   review: "#bf8e3b",

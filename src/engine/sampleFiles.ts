@@ -15,7 +15,169 @@ export function generateSampleFiles(): FileItem[] {
   const hour = 3600000;
 
   return [
-    // Minecraft & Gaming
+    // Top Mockup items (Project Aurora, Research Paper, Brand Guidelines, Screenshots)
+    {
+      id: "samp-aurora-dir",
+      name: "Project Aurora",
+      source: "C:/Users/User/Documents/Projects/Project Aurora",
+      size: 142500000,
+      mtime: now - 2 * hour,
+      is_dir: true,
+      selected: true,
+      category: "Projects/Website Redesign",
+      verdict: makeVerdict(
+        ["Projects", "Website Redesign"],
+        "Project Directory (12 items)",
+        0.98,
+        ["Git repository detected with source manifests", "Contains responsive UI designs and code modules"]
+      ),
+    },
+    {
+      id: "samp-hero-psd",
+      name: "homepage-hero.psd",
+      source: "C:/Users/User/Documents/Projects/Website Redesign/homepage-hero.psd",
+      size: 19608576,
+      mtime: now - 2 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Projects/Website Redesign/Graphics",
+      verdict: makeVerdict(
+        ["Projects", "Website Redesign", "Graphics"],
+        "Adobe Photoshop Document (.psd)",
+        0.99,
+        ["8BPS magic signature verified", "Layered graphic composition with RGB channels"]
+      ),
+    },
+    {
+      id: "samp-research-pdf",
+      name: "Research Paper.pdf",
+      source: "C:/Users/User/Downloads/Research Paper.pdf",
+      size: 2516582,
+      mtime: now - 1 * day - 3 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Documents/Academic & Research",
+      verdict: makeVerdict(
+        ["Documents", "Academic & Research"],
+        "PDF Document (Academic Research Paper)",
+        0.98,
+        ["%PDF-1.7 verified header", "Keywords matched: abstract, methodology, bibliography, empirical analysis"]
+      ),
+    },
+    {
+      id: "samp-brand-guidelines",
+      name: "Brand Guidelines.pdf",
+      source: "C:/Users/User/Downloads/Brand Guidelines.pdf",
+      size: 15309200,
+      mtime: now - 1 * day - 8 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Documents/Branding & Design",
+      verdict: makeVerdict(
+        ["Documents", "Branding & Design"],
+        "Brand Identity Manual (.pdf)",
+        0.97,
+        ["%PDF-1.6 vector graphics stream", "Keywords: color palette, logo usage, typography scale, brand identity"]
+      ),
+    },
+    {
+      id: "samp-dash-png",
+      name: "Dashboard Screenshot.png",
+      source: "C:/Users/User/Downloads/Dashboard Screenshot.png",
+      size: 1153433,
+      mtime: now - 2 * day - 4 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Images/Screenshots",
+      verdict: makeVerdict(
+        ["Images", "Screenshots"],
+        "PNG Image (High-Res Screenshot)",
+        0.99,
+        ["PNG signature bytes: 89 50 4E 47", "Dimension 2560x1440, 24-bit sRGB color profile"]
+      ),
+    },
+    {
+      id: "samp-hero-concept",
+      name: "Hero Concept.png",
+      source: "C:/Users/User/Downloads/Hero Concept.png",
+      size: 28311552,
+      mtime: now - 2 * day - 6 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Images/Concepts & Artwork",
+      verdict: makeVerdict(
+        ["Images", "Concepts & Artwork"],
+        "High-Resolution Render (.png)",
+        0.99,
+        ["PNG lossless RGBA stream", "Rendered 4K asset export"]
+      ),
+    },
+    {
+      id: "samp-meeting-docx",
+      name: "Meeting Notes.docx",
+      source: "C:/Users/User/Downloads/Meeting Notes.docx",
+      size: 876544,
+      mtime: now - 3 * day - 2 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Documents/Meeting Notes",
+      verdict: makeVerdict(
+        ["Documents", "Meeting Notes"],
+        "Word Document (Meeting Minutes)",
+        0.96,
+        ["DOCX OpenXML package verified", "Keywords: action items, attendees, agenda, roadmap milestones"]
+      ),
+    },
+    {
+      id: "samp-notes-md",
+      name: "notes-2024-05-14.md",
+      source: "C:/Users/User/Documents/Meeting Notes/notes-2024-05-14.md",
+      size: 1153433,
+      mtime: now - 3 * day - 10 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Documents/Notes & Markdown",
+      verdict: makeVerdict(
+        ["Documents", "Notes & Markdown"],
+        "Markdown Document (.md)",
+        0.97,
+        ["UTF-8 encoded markdown syntax", "Frontmatter metadata present"]
+      ),
+    },
+    {
+      id: "samp-design-zip",
+      name: "Design Assets.zip",
+      source: "C:/Users/User/Downloads/Design Assets.zip",
+      size: 19608576,
+      mtime: now - 4 * day - 1 * hour,
+      is_dir: false,
+      selected: true,
+      category: "Archives/Design Bundles",
+      verdict: makeVerdict(
+        ["Archives", "Design Bundles"],
+        "Compressed ZIP Archive (Figma/Vector Assets)",
+        0.96,
+        ["PK ZIP central directory signature", "Contains SVG icons, typography files (.otf), and JSON animations"]
+      ),
+    },
+    {
+      id: "samp-client-backup",
+      name: "client-backup.zip",
+      source: "C:/Users/User/Downloads/client-backup.zip",
+      size: 56942592,
+      mtime: now - 7 * day,
+      is_dir: false,
+      selected: true,
+      category: "Archives/Backups",
+      verdict: makeVerdict(
+        ["Archives", "Backups"],
+        "System Backup Bundle (.zip)",
+        0.95,
+        ["PK zip container", "Multi-folder archive with SQL dumps and asset trees"]
+      ),
+    },
+
+    // Minecraft & Gaming Ecosystem
     {
       id: "samp-1",
       name: "sodium-fabric-mc1.20.4-0.5.8.jar",
@@ -28,7 +190,7 @@ export function generateSampleFiles(): FileItem[] {
       verdict: makeVerdict(
         ["Games", "Minecraft", "Mods", "Fabric"],
         "Fabric mod 'sodium' 0.5.8",
-        0.96,
+        0.98,
         ["fabric.mod.json descriptor detected: id=sodium version=0.5.8", "Minecraft 1.20.4 target environment"]
       ),
     },
@@ -44,7 +206,7 @@ export function generateSampleFiles(): FileItem[] {
       verdict: makeVerdict(
         ["Games", "Minecraft", "Mods", "Fabric"],
         "Fabric mod 'iris' 1.6.17",
-        0.95,
+        0.97,
         ["fabric.mod.json detected", "Shaderpack loader support"]
       ),
     },
@@ -76,28 +238,12 @@ export function generateSampleFiles(): FileItem[] {
       verdict: makeVerdict(
         ["Games", "Minecraft", "Shaders"],
         "Minecraft Shaderpack 'Complementary' v4.7.2",
-        0.94,
+        0.95,
         ["Contains shaders/ folder with post-processing shaders", "OptiFine/Iris compatibility"]
       ),
     },
-    {
-      id: "samp-5",
-      name: "Super_Mario_World.sfc",
-      source: "C:/Users/User/Downloads/Super_Mario_World.sfc",
-      size: 524288,
-      mtime: now - 15 * day,
-      is_dir: false,
-      selected: true,
-      category: "Games/ROMs & Emulators",
-      verdict: makeVerdict(
-        ["Games", "ROMs & Emulators"],
-        "SNES ROM image (Super Mario World)",
-        0.92,
-        [".sfc ROM signature", "Standard SNES cartridge image"]
-      ),
-    },
 
-    // Documents
+    // Documents & Financial
     {
       id: "samp-6",
       name: "Invoice_Q3_AcmeCorp_2026.pdf",
@@ -130,171 +276,56 @@ export function generateSampleFiles(): FileItem[] {
         ["%PDF- signature verified", "Keywords present: work experience, education, skills, linkedin"]
       ),
     },
-    {
-      id: "samp-8",
-      name: "Non_Disclosure_Agreement_Mutual.docx",
-      source: "C:/Users/User/Downloads/Non_Disclosure_Agreement_Mutual.docx",
-      size: 64200,
-      mtime: now - 6 * day,
-      is_dir: false,
-      selected: true,
-      category: "Documents/Contracts & Legal",
-      verdict: makeVerdict(
-        ["Documents", "Contracts & Legal"],
-        "Legal Contract (Mutual NDA)",
-        0.94,
-        ["DOCX OpenXML structure verified", "Keywords present: confidentiality, terms and conditions, governing law"]
-      ),
-    },
-    {
-      id: "samp-9",
-      name: "Calculus_III_Final_Exam_Review.pdf",
-      source: "C:/Users/User/Downloads/Calculus_III_Final_Exam_Review.pdf",
-      size: 1540000,
-      mtime: now - 8 * day,
-      is_dir: false,
-      selected: true,
-      category: "Documents/Study Material",
-      verdict: makeVerdict(
-        ["Documents", "Study Material"],
-        "Academic Study Material (Calculus)",
-        0.92,
-        ["Contains study keywords: exam, syllabus, homework, learning objectives"]
-      ),
-    },
 
-    // Duplicates Sample Set (Near duplicates with version & noise)
+    // Duplicates & Versioned Downloads
     {
       id: "samp-10",
-      name: "filealigner v2.0.zip",
-      source: "C:/Users/User/Downloads/filealigner v2.0.zip",
-      size: 8950000,
-      mtime: now - 2 * hour,
+      name: "filealigner-setup-v5.0.0.exe",
+      source: "C:/Users/User/Downloads/filealigner-setup-v5.0.0.exe",
+      size: 68500000,
+      mtime: now - 8 * day,
       is_dir: false,
-      selected: true,
-      category: "Archives",
+      selected: false,
+      category: "Software/Installers",
       verdict: makeVerdict(
-        ["Archives"],
-        "ZIP archive bundle",
-        0.94,
-        ["PK ZIP header verified"]
+        ["Software", "Installers"],
+        "Windows Installer (FileAligner 5.0.0)",
+        0.98,
+        ["PE executable with installer manifest", "Older version of FileAligner installer"]
       ),
     },
     {
       id: "samp-11",
-      name: "filealigner v1.9 (1).zip",
-      source: "C:/Users/User/Downloads/filealigner v1.9 (1).zip",
-      size: 8910000,
-      mtime: now - 2 * day,
+      name: "filealigner-setup-v5.1.0.exe",
+      source: "C:/Users/User/Downloads/filealigner-setup-v5.1.0.exe",
+      size: 69200000,
+      mtime: now - 1 * day,
       is_dir: false,
       selected: true,
-      category: "Archives",
+      category: "Software/Installers",
       verdict: makeVerdict(
-        ["Archives"],
-        "ZIP archive bundle (Duplicate copy)",
-        0.90,
-        ["PK ZIP header verified", "Near-duplicate version candidate"]
+        ["Software", "Installers"],
+        "Windows Installer (FileAligner 5.1.0 - Latest)",
+        0.99,
+        ["PE executable with digital signature", "Highest version detected in duplicate set"]
       ),
     },
+
+    // AI & Developer Projects
     {
-      id: "samp-12",
-      name: "filealigner v1.8 (2 hours ago).zip",
-      source: "C:/Users/User/Downloads/filealigner v1.8 (2 hours ago).zip",
-      size: 8840000,
+      id: "samp-16",
+      name: "react-vite-dashboard-template.zip",
+      source: "C:/Users/User/Downloads/react-vite-dashboard-template.zip",
+      size: 12400000,
       mtime: now - 7 * day,
       is_dir: false,
       selected: true,
-      category: "Archives",
+      category: "Development/Templates & Boilerplates",
       verdict: makeVerdict(
-        ["Archives"],
-        "ZIP archive bundle (Duplicate copy)",
-        0.88,
-        ["PK ZIP header verified", "Near-duplicate version candidate"]
-      ),
-    },
-
-    // Media & Photos
-    {
-      id: "samp-13",
-      name: "Screenshot 2026-10-12 at 14.30.15.png",
-      source: "C:/Users/User/Downloads/Screenshot 2026-10-12 at 14.30.15.png",
-      size: 1840000,
-      mtime: now - 2 * day,
-      is_dir: false,
-      selected: true,
-      category: "Images/Screenshots",
-      verdict: makeVerdict(
-        ["Images", "Screenshots"],
-        "Desktop Screenshot (PNG)",
-        0.95,
-        ["PNG 8-byte header matched", "Screenshot filename format detected"]
-      ),
-    },
-    {
-      id: "samp-14",
-      name: "IMG_20261010_182045.jpg",
-      source: "C:/Users/User/Downloads/IMG_20261010_182045.jpg",
-      size: 4200000,
-      mtime: now - 4 * day,
-      is_dir: false,
-      selected: true,
-      category: "Images/Photos",
-      verdict: makeVerdict(
-        ["Images", "Photos"],
-        "Camera Photo (JPEG)",
-        0.93,
-        ["JPEG SOI header matched", "DCIM camera sensor naming format"]
-      ),
-    },
-    {
-      id: "samp-15",
-      name: "podcast_ep42_final_master.mp3",
-      source: "C:/Users/User/Downloads/podcast_ep42_final_master.mp3",
-      size: 48500000,
-      mtime: now - 6 * day,
-      is_dir: false,
-      selected: true,
-      category: "Audio",
-      verdict: makeVerdict(
-        ["Audio"],
-        "MP3 Audio Recording",
-        0.95,
-        ["ID3 audio stream container recognized"]
-      ),
-    },
-    {
-      id: "samp-16",
-      name: "screen_recording_demo.mp4",
-      source: "C:/Users/User/Downloads/screen_recording_demo.mp4",
-      size: 92400000,
-      mtime: now - 5 * day,
-      is_dir: false,
-      selected: true,
-      category: "Videos",
-      verdict: makeVerdict(
-        ["Videos"],
-        "MP4 Video Recording",
-        0.96,
-        ["ISO Base Media ftyp atom header verified"]
-      ),
-    },
-
-    // Development & AI Models
-    {
-      id: "samp-17",
-      name: "discord_music_bot",
-      source: "C:/Users/User/Downloads/discord_music_bot",
-      size: 320000,
-      mtime: now - 3 * day,
-      is_dir: true,
-      selected: true,
-      category: "Development/Discord Bots",
-      verdict: makeVerdict(
-        ["Development", "Discord Bots"],
-        "Discord Bot project folder",
-        0.96,
-        ["package.json depends on discord.js", "Contains bot entry point and commands", "Folder analyzed as single unit"],
-        true
+        ["Development", "Templates & Boilerplates"],
+        "React/Vite Project Workspace",
+        0.97,
+        ["package.json detected in ZIP archive root", "Dependencies: react, vite, tailwindcss"]
       ),
     },
     {
@@ -313,22 +344,6 @@ export function generateSampleFiles(): FileItem[] {
         ["GGUF binary signature", "Large language model weights"]
       ),
     },
-    {
-      id: "samp-19",
-      name: "VSCodeUserSetup-x64-1.93.1.exe",
-      source: "C:/Users/User/Downloads/VSCodeUserSetup-x64-1.93.1.exe",
-      size: 94500000,
-      mtime: now - 9 * day,
-      is_dir: false,
-      selected: true,
-      category: "Software/Installers",
-      verdict: makeVerdict(
-        ["Software", "Installers"],
-        "Windows Application Installer (VS Code)",
-        0.95,
-        ["PE MZ executable header", "InnoSetup installer wrapper structure"]
-      ),
-    },
 
     // Review / Needs Attention (Never junk "Others")
     {
@@ -345,22 +360,6 @@ export function generateSampleFiles(): FileItem[] {
         "Ambiguous binary dump (.bin)",
         0.35,
         ["Binary content without standard signature", "Too ambiguous to file automatically into a system folder"]
-      ),
-    },
-    {
-      id: "samp-21",
-      name: "empty_placeholder.log",
-      source: "C:/Users/User/Downloads/empty_placeholder.log",
-      size: 0,
-      mtime: now - 14 * day,
-      is_dir: false,
-      selected: true,
-      category: "Review/Empty Files",
-      verdict: makeVerdict(
-        ["Review", "Empty Files"],
-        "Empty file (0 bytes)",
-        0.60,
-        ["File is zero bytes (0 B)"]
       ),
     },
   ];

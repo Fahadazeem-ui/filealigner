@@ -1,28 +1,36 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { ThemeColors } from '../engine/themes';
-import { FileItem, ScanResult, AppSettings } from '../types';
+import { FileItem, AppSettings } from '../types';
 import { formatBytes } from '../engine/sampleFiles';
+import { FileBadgeIcon } from './FileBadgeIcon';
 import { exportOrganizedZip } from './ZipExporter';
+import { FilePreviewModal } from './FilePreviewModal';
 import { 
   Folder, 
   FolderOpen, 
-  FileText, 
   CheckSquare, 
   Square, 
   MinusSquare, 
   ChevronRight, 
   ChevronDown, 
   Play, 
-  Check, 
   RotateCcw, 
   Download, 
   Sparkles, 
-  AlertCircle, 
-  FolderArchive, 
   Upload,
-  Info,
   ShieldCheck,
-  Search as SearchIcon
+  Search as SearchIcon,
+  FolderPlus,
+  Info,
+  SlidersHorizontal,
+  X,
+  HardDrive,
+  Copy,
+  Check,
+  Eye,
+  PanelRightOpen,
+  ExternalLink,
+  ArrowRight
 } from 'lucide-react';
 
 interface SortViewProps {
@@ -39,10 +47,14 @@ interface SortViewProps {
   onUndoLast: () => void;
   onLoadPreset: (presetName: string) => void;
   onUploadFiles: (files: FileList) => void;
+  onAddRuleFromItem?: (pattern: string, type: 'extension' | 'regex', dest: string[]) => void;
   isLoading: boolean;
   progressPercent: number;
   progressStage: string;
   auditModeOnly?: boolean;
+  viewLayout: 'list' | 'grid';
+  showInspector: boolean;
+  setShowInspector: (show: boolean) => void;
 }
 
 export const SortView: React.FC<SortViewProps> = ({
@@ -59,10 +71,14 @@ export const SortView: React.FC<SortViewProps> = ({
   onUndoLast,
   onLoadPreset,
   onUploadFiles,
+  onAddRuleFromItem,
   isLoading,
   progressPercent,
   progressStage,
   auditModeOnly = false,
+  viewLayout,
+  showInspector,
+  setShowInspector,
 }) => {
   const [filterMode, setFilterMode] = useState<'all' | 'sure' | 'unsure' | 'review'>('all');
   const [filterText, setFilterText] = useState('');
@@ -72,6 +88,16 @@ export const SortView: React.FC<SortViewProps> = ({
   const [recursive, setRecursive] = useState(true);
   const [removeEmpty, setRemoveEmpty] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const [showOptionsBar, setShowOptionsBar] = useState(false);
+  const [showPathBar, setShowPathBar] = useState(true);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+  
+  // Interactive File Preview Modal & Quick Clipboard state
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<FileItem | null>(null);
+  const [copiedSource, setCopiedSource] = useState(false);
+  const [copiedDest, setCopiedDest] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -110,7 +136,7 @@ export const SortView: React.FC<SortViewProps> = ({
     return res;
   }, [categories, filterMode, filterText]);
 
-  // Find currently selected item for detail panel
+  // Active item for inspection
   const activeItem = useMemo(() => {
     if (!selectedItemId) {
       return items[0] || null;
@@ -118,7 +144,7 @@ export const SortView: React.FC<SortViewProps> = ({
     return items.find(i => i.id === selectedItemId) || items[0] || null;
   }, [items, selectedItemId]);
 
-  // Counts
+  // Item counts
   const counts = useMemo(() => {
     let sure = 0, probably = 0, unsure = 0, review = 0, selected = 0, totalSize = 0;
     for (const it of items) {
@@ -132,13 +158,11 @@ export const SortView: React.FC<SortViewProps> = ({
     return { sure, probably, unsure, review, selected, totalSize };
   }, [items]);
 
-  // Toggle selection for an individual item
   const toggleItemSelect = (id: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     setItems(prev => prev.map(it => it.id === id ? { ...it, selected: !it.selected } : it));
   };
 
-  // Toggle category group selection
   const toggleCategorySelect = (cat: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
     const groupItems = categories[cat] || [];
@@ -187,7 +211,6 @@ export const SortView: React.FC<SortViewProps> = ({
     }
   };
 
-  // Modern browser Directory Picker support
   const handlePickDirectory = async () => {
     if ('showDirectoryPicker' in window) {
       try {
@@ -195,7 +218,6 @@ export const SortView: React.FC<SortViewProps> = ({
         const dirHandle = await window.showDirectoryPicker();
         setScopePath(dirHandle.name || 'Selected Directory');
         
-        // Scan entries
         const collectedFiles: FileItem[] = [];
         for await (const entry of (dirHandle as any).values()) {
           if (entry.kind === 'file') {
@@ -235,9 +257,68 @@ export const SortView: React.FC<SortViewProps> = ({
     }
   };
 
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDraggingOver(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      onUploadFiles(e.dataTransfer.files);
+    }
+  };
+
+  const handleAddFolder = () => {
+    const folderName = prompt("Enter new destination category name (e.g. Work/Reports):");
+    if (!folderName || !folderName.trim()) return;
+    const cat = folderName.trim();
+    // Add empty placeholder or select into
+    setDestPath(cat);
+  };
+
+  const handleUpdateCategory = (itemId: string, newDest: string[]) => {
+    setItems(prev => prev.map(it => {
+      if (it.id === itemId) {
+        const newPath = newDest.join('/');
+        return {
+          ...it,
+          category: newPath,
+          verdict: {
+            ...it.verdict,
+            dest: newDest,
+            path: newPath,
+            evidence: [...it.verdict.evidence, `Custom category override: ${newPath}`],
+            level: 'Sure' as const,
+          }
+        };
+      }
+      return it;
+    }));
+  };
+
+  const handleOpenPreview = (item: FileItem) => {
+    setSelectedItemId(item.id);
+    setPreviewItem(item);
+    setIsPreviewModalOpen(true);
+  };
+
+  const handleCopySource = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedSource(true);
+    setTimeout(() => setCopiedSource(false), 2000);
+  };
+
+  const handleCopyDest = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedDest(true);
+    setTimeout(() => setCopiedDest(false), 2000);
+  };
+
   return (
-    <div className="flex flex-col h-full overflow-hidden select-none">
-      {/* Hidden file inputs for manual folder/file selection */}
+    <div 
+      className="flex flex-col h-full overflow-hidden select-none relative"
+      onDragOver={e => { e.preventDefault(); setIsDraggingOver(true); }}
+      onDragLeave={() => setIsDraggingOver(false)}
+      onDrop={handleDrop}
+    >
+      {/* Hidden inputs */}
       <input 
         type="file" 
         ref={fileInputRef} 
@@ -256,300 +337,358 @@ export const SortView: React.FC<SortViewProps> = ({
         onChange={e => e.target.files && onUploadFiles(e.target.files)} 
       />
 
-      {/* Top Scope & Destination Panel */}
-      <div 
-        className="border-b p-3 space-y-2.5 transition-colors"
-        style={{ backgroundColor: theme.panel, borderColor: theme.border }}
-      >
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
-          <div className="md:col-span-1 text-xs font-semibold" style={{ color: theme.fg }}>
-            Folder:
-          </div>
-          <div className="md:col-span-8 flex items-center gap-2">
-            <input
-              type="text"
-              value={scopePath}
-              onChange={e => setScopePath(e.target.value)}
-              placeholder="e.g. C:/Users/Downloads"
-              className="flex-1 px-3 py-1.5 rounded border text-xs font-mono outline-none focus:ring-1 transition-all"
+      {/* Drag & drop overlay */}
+      {isDraggingOver && (
+        <div 
+          className="absolute inset-4 z-40 rounded-3xl border-2 border-dashed flex flex-col items-center justify-center backdrop-blur-md transition-all"
+          style={{
+            backgroundColor: `${theme.accent}20`,
+            borderColor: theme.accent,
+            color: theme.fg,
+          }}
+        >
+          <Upload className="w-12 h-12 mb-3 animate-bounce" style={{ color: theme.accent }} />
+          <p className="font-bold text-base">Drop files or folders here to ingest &amp; sort</p>
+          <p className="text-xs opacity-75 mt-1">Automatic signature fingerprinting will begin instantly</p>
+        </div>
+      )}
+
+      {/* Top Floating Controls Card */}
+      <div className="p-3.5 mx-4 mt-2 mb-1 rounded-3xl border glass-container shadow-md transition-all">
+        {/* Scope, Presets, and Search Row */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-1 min-w-[280px]">
+            {/* Scope input pill */}
+            <div 
+              className="flex items-center gap-2 px-3 py-1.5 rounded-full border flex-1 text-xs shadow-inner"
               style={{
                 backgroundColor: theme.entry_bg,
-                borderColor: theme.border,
-                color: theme.fg,
+                borderColor: theme.glassBorder,
               }}
-            />
+            >
+              <Folder className="w-4 h-4 shrink-0" style={{ color: theme.accent }} />
+              <input
+                type="text"
+                value={scopePath}
+                onChange={e => setScopePath(e.target.value)}
+                placeholder="Folder to organize..."
+                className="w-full bg-transparent border-none outline-none font-medium text-xs"
+                style={{ color: theme.fg }}
+              />
+            </div>
+
+            {/* Browse Button */}
             <button
               onClick={handlePickDirectory}
-              className="px-3 py-1.5 rounded text-xs font-medium border flex items-center gap-1.5 shrink-0 transition-colors hover:shadow-sm"
+              className="px-3.5 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition-transform hover:scale-102 cursor-pointer shadow-xs"
               style={{
                 backgroundColor: theme.button,
-                borderColor: theme.border,
+                borderColor: theme.glassBorder,
                 color: theme.fg,
               }}
             >
               <Upload className="w-3.5 h-3.5" />
-              Browse Folder...
+              <span>Browse</span>
             </button>
-          </div>
 
-          <div className="md:col-span-3 flex items-center justify-end gap-1.5">
-            <span className="text-[11px]" style={{ color: theme.fg_muted }}>Preset:</span>
+            {/* Presets dropdown */}
             <select
               onChange={e => onLoadPreset(e.target.value)}
-              className="px-2 py-1.5 rounded border text-xs font-medium outline-none"
+              className="px-3 py-1.5 rounded-full border text-xs font-medium outline-none cursor-pointer shadow-xs"
               style={{
-                backgroundColor: theme.entry_bg,
-                borderColor: theme.border,
+                backgroundColor: theme.button,
+                borderColor: theme.glassBorder,
                 color: theme.fg,
               }}
               defaultValue="downloads"
             >
-              <option value="downloads">Messy Downloads (21 files)</option>
-              <option value="minecraft">Minecraft & Mods (Gaming)</option>
-              <option value="documents">Invoices & Documents</option>
-              <option value="duplicates">Duplicates Test Bundle</option>
+              <option value="downloads">Demo: Downloads (21 files)</option>
+              <option value="minecraft">Demo: Gaming &amp; Minecraft</option>
+              <option value="documents">Demo: Invoices &amp; Docs</option>
+              <option value="duplicates">Demo: Duplicate Files</option>
             </select>
           </div>
-        </div>
 
-        {/* Optional Destination */}
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
-          <div className="md:col-span-1 text-xs font-medium" style={{ color: theme.fg_muted }}>
-            Into:
-          </div>
-          <div className="md:col-span-8 flex items-center gap-2">
-            <input
-              type="text"
-              value={destPath}
-              onChange={e => setDestPath(e.target.value)}
-              placeholder="(Optional: default organizes directly inside source folder)"
-              className="flex-1 px-3 py-1.5 rounded border text-xs font-mono outline-none focus:ring-1 transition-all"
+          {/* Quick Find Search Input */}
+          <div className="flex items-center gap-2">
+            <div 
+              className="relative flex items-center px-3 py-1.5 rounded-full border text-xs shadow-inner w-56"
               style={{
                 backgroundColor: theme.entry_bg,
-                borderColor: theme.border,
-                color: theme.fg,
-              }}
-            />
-            <button
-              onClick={() => setDestPath(scopePath ? `${scopePath}/Organized` : 'C:/Users/Organized')}
-              className="px-2.5 py-1.5 rounded text-xs font-medium border shrink-0 transition-colors"
-              style={{
-                backgroundColor: theme.card,
-                borderColor: theme.border,
-                color: theme.fg,
+                borderColor: theme.glassBorder,
               }}
             >
-              Auto-Set
-            </button>
-          </div>
-
-          <div className="md:col-span-3 flex items-center gap-4 text-xs">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={recursive} 
-                onChange={e => setRecursive(e.target.checked)}
-                className="rounded accent-blue-600"
-              />
-              <span style={{ color: theme.fg }}>Sub-folders</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={removeEmpty} 
-                onChange={e => setRemoveEmpty(e.target.checked)}
-                className="rounded accent-blue-600"
-              />
-              <span style={{ color: theme.fg }}>Remove empty</span>
-            </label>
-          </div>
-        </div>
-
-        {/* Action Row & Progress */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => onPreview(sortMode)}
-              disabled={isLoading}
-              className="px-4 py-1.5 rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95 disabled:opacity-50"
-              style={{
-                backgroundColor: theme.accent,
-                color: theme.accent_fg,
-              }}
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              1. Preview
-            </button>
-
-            <button
-              onClick={() => onSort(items.filter(i => i.selected))}
-              disabled={isLoading || counts.selected === 0}
-              className="px-4 py-1.5 rounded-md text-xs font-semibold border flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 disabled:opacity-40"
-              style={{
-                backgroundColor: counts.selected > 0 ? theme.ok : theme.card,
-                color: counts.selected > 0 ? '#ffffff' : theme.fg,
-                borderColor: theme.border,
-              }}
-            >
-              <Check className="w-3.5 h-3.5" />
-              2. Sort selected ({counts.selected})
-            </button>
-
-            <button
-              onClick={onUndoLast}
-              disabled={isLoading}
-              className="px-3 py-1.5 rounded-md text-xs font-medium border flex items-center gap-1.5 transition-colors disabled:opacity-50"
-              style={{
-                backgroundColor: theme.card,
-                borderColor: theme.border,
-                color: theme.fg,
-              }}
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              Undo last
-            </button>
-
-            <button
-              onClick={handleExportZip}
-              disabled={counts.selected === 0 || isExporting}
-              className="px-3 py-1.5 rounded-md text-xs font-medium border flex items-center gap-1.5 transition-colors disabled:opacity-50"
-              style={{
-                backgroundColor: theme.card,
-                borderColor: theme.border,
-                color: theme.fg,
-              }}
-              title="Download clean folder archive structured according to classification"
-            >
-              <Download className="w-3.5 h-3.5" />
-              {isExporting ? "Exporting..." : "Export ZIP"}
-            </button>
-          </div>
-
-          {/* Progress bar */}
-          <div className="flex items-center gap-3 shrink-0">
-            {isLoading && (
-              <span className="text-xs font-medium animate-pulse" style={{ color: theme.accent }}>
-                {progressStage}
-              </span>
-            )}
-            <div 
-              className="w-48 h-2 rounded-full overflow-hidden border"
-              style={{ backgroundColor: theme.card, borderColor: theme.border }}
-            >
-              <div 
-                className="h-full transition-all duration-300"
-                style={{
-                  width: `${progressPercent}%`,
-                  backgroundColor: theme.progress,
-                }}
-              />
-            </div>
-            <span className="text-xs font-mono font-medium w-9 text-right" style={{ color: theme.fg_muted }}>
-              {progressPercent}%
-            </span>
-          </div>
-        </div>
-
-        {/* Filter bar */}
-        <div 
-          className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t text-xs"
-          style={{ borderColor: theme.border }}
-        >
-          <div className="flex items-center gap-2">
-            <span className="font-medium" style={{ color: theme.fg_muted }}>Filter:</span>
-            {(['all', 'sure', 'unsure', 'review'] as const).map(m => (
-              <button
-                key={m}
-                onClick={() => setFilterMode(m)}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium capitalize transition-colors ${
-                  filterMode === m ? 'font-bold underline' : 'opacity-80'
-                }`}
-                style={{
-                  color: filterMode === m ? theme.accent : theme.fg,
-                }}
-              >
-                {m}
-              </button>
-            ))}
-
-            <div className="h-3 w-px bg-current opacity-20 mx-1" />
-
-            <div className="relative flex items-center">
-              <SearchIcon className="w-3 h-3 absolute left-2 opacity-50" />
+              <SearchIcon className="w-3.5 h-3.5 opacity-50 shrink-0 mr-1.5" />
               <input
                 type="text"
-                placeholder="Find in preview..."
+                placeholder="Find in files..."
                 value={filterText}
                 onChange={e => setFilterText(e.target.value)}
-                className="pl-6 pr-2 py-0.5 rounded border text-[11px] outline-none"
+                className="w-full bg-transparent border-none outline-none text-xs"
+                style={{ color: theme.fg }}
+              />
+              {filterText && (
+                <button onClick={() => setFilterText('')} className="opacity-50 hover:opacity-100">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Advanced Options Toggle */}
+            <button
+              onClick={() => setShowOptionsBar(!showOptionsBar)}
+              title="Advanced routing and sub-folder options"
+              className={`p-1.5 rounded-full border transition-all ${showOptionsBar ? 'shadow-xs font-bold' : 'opacity-70'}`}
+              style={{
+                backgroundColor: showOptionsBar ? theme.select : theme.button,
+                borderColor: theme.glassBorder,
+                color: showOptionsBar ? theme.accent : theme.fg,
+              }}
+            >
+              <SlidersHorizontal className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Advanced Options Drawer */}
+        {showOptionsBar && (
+          <div 
+            className="pt-2.5 mt-2.5 border-t grid grid-cols-1 md:grid-cols-12 gap-3 items-center text-xs animate-in fade-in slide-in-from-top-1 duration-200"
+            style={{ borderColor: theme.glassBorder }}
+          >
+            <div className="md:col-span-6 flex items-center gap-2">
+              <span className="opacity-70 text-[11px] font-semibold">Into Destination:</span>
+              <input
+                type="text"
+                value={destPath}
+                onChange={e => setDestPath(e.target.value)}
+                placeholder="Optional destination root (defaults to source folder)"
+                className="flex-1 px-3 py-1 rounded-full border text-xs outline-none"
                 style={{
                   backgroundColor: theme.entry_bg,
-                  borderColor: theme.border,
+                  borderColor: theme.glassBorder,
                   color: theme.fg,
                 }}
               />
             </div>
+
+            <div className="md:col-span-6 flex items-center justify-end gap-4">
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={recursive}
+                  onChange={e => setRecursive(e.target.checked)}
+                  className="rounded accent-blue-600"
+                />
+                <span>Include Sub-folders</span>
+              </label>
+
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={removeEmpty}
+                  onChange={e => setRemoveEmpty(e.target.checked)}
+                  className="rounded accent-blue-600"
+                />
+                <span>Remove empty folders</span>
+              </label>
+
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sortMode === 'audit'}
+                  onChange={e => setSortMode(e.target.checked ? 'audit' : 'sort')}
+                  className="rounded accent-blue-600"
+                />
+                <span>Audit Only</span>
+              </label>
+            </div>
+          </div>
+        )}
+
+        {/* Action Row & Category Filters */}
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 mt-1 border-t" style={{ borderColor: theme.glassBorder }}>
+          {/* Action buttons matching screenshot #1 and #2 */}
+          <div className="flex items-center gap-2">
+            {/* 1. Preview button */}
+            <button
+              onClick={() => onPreview(sortMode)}
+              disabled={isLoading}
+              className="px-4 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-md active:scale-95 disabled:opacity-50"
+              style={{
+                backgroundColor: theme.button,
+                borderColor: theme.glassBorder,
+                color: theme.fg,
+              }}
+            >
+              <Play className="w-3.5 h-3.5 fill-current opacity-80" />
+              <span>1. Preview</span>
+            </button>
+
+            {/* Quick Organize / Sort Selected (Blooming Gradient button) */}
+            <button
+              onClick={() => onSort(items.filter(i => i.selected))}
+              disabled={isLoading || counts.selected === 0}
+              className="px-5 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 shadow-md transition-all cursor-pointer active:scale-95 disabled:opacity-40"
+              style={{
+                background: counts.selected > 0 ? theme.accentGradient : theme.button,
+                boxShadow: counts.selected > 0 ? theme.accentGlow : 'none',
+                color: counts.selected > 0 ? theme.accent_fg : theme.fg_muted,
+              }}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Quick Organize ({counts.selected})</span>
+            </button>
+
+            {/* New Folder Action Button (matching screenshot #1 & #2) */}
+            <button
+              onClick={handleAddFolder}
+              className="px-3.5 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition-all hover:scale-102"
+              style={{
+                backgroundColor: theme.button,
+                borderColor: theme.glassBorder,
+                color: theme.fg,
+              }}
+            >
+              <FolderPlus className="w-3.5 h-3.5" />
+              <span>New Folder</span>
+            </button>
+
+            {/* Export ZIP */}
+            <button
+              onClick={handleExportZip}
+              disabled={counts.selected === 0 || isExporting}
+              className="px-3.5 py-1.5 rounded-full text-xs font-semibold border flex items-center gap-1.5 transition-all hover:scale-102 disabled:opacity-40"
+              style={{
+                backgroundColor: theme.button,
+                borderColor: theme.glassBorder,
+                color: theme.fg,
+              }}
+              title="Download organized zip bundle"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isExporting ? "Exporting..." : "Export ZIP"}</span>
+            </button>
+
+            {/* Undo last */}
+            <button
+              onClick={onUndoLast}
+              disabled={isLoading}
+              className="px-3 py-1.5 rounded-full text-xs font-medium border flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              style={{
+                backgroundColor: theme.button,
+                borderColor: theme.glassBorder,
+                color: theme.fg_muted,
+              }}
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Undo Last</span>
+            </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-[11px]" style={{ color: theme.fg_muted }}>Select:</span>
-            <button
-              onClick={() => selectAll('all')}
-              className="text-[11px] hover:underline"
-              style={{ color: theme.accent }}
+          {/* Filter Pills & Selection */}
+          <div className="flex items-center gap-3 text-xs">
+            {/* Filter pills */}
+            <div 
+              className="flex items-center gap-1 p-0.5 rounded-full border"
+              style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder }}
             >
-              All
-            </button>
-            <button
-              onClick={() => selectAll('sure')}
-              className="text-[11px] hover:underline"
-              style={{ color: theme.ok }}
-            >
-              Sure only
-            </button>
-            <button
-              onClick={() => selectAll('none')}
-              className="text-[11px] hover:underline"
-              style={{ color: theme.fg_muted }}
-            >
-              None
-            </button>
+              {(['all', 'sure', 'unsure', 'review'] as const).map(m => (
+                <button
+                  key={m}
+                  onClick={() => setFilterMode(m)}
+                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold capitalize transition-all ${
+                    filterMode === m ? 'shadow-xs font-bold' : 'opacity-70 hover:opacity-100'
+                  }`}
+                  style={{
+                    backgroundColor: filterMode === m ? theme.select : 'transparent',
+                    color: filterMode === m ? theme.accent : theme.fg,
+                  }}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex items-center gap-1.5 text-[11px]">
+              <span className="opacity-60">Select:</span>
+              <button onClick={() => selectAll('all')} className="hover:underline font-semibold" style={{ color: theme.accent }}>
+                All
+              </button>
+              <span className="opacity-40">•</span>
+              <button onClick={() => selectAll('sure')} className="hover:underline font-semibold" style={{ color: theme.ok }}>
+                Sure
+              </button>
+              <span className="opacity-40">•</span>
+              <button onClick={() => selectAll('none')} className="hover:underline opacity-60">
+                None
+              </button>
+            </div>
           </div>
         </div>
+
+        {/* Loading progress bar */}
+        {isLoading && (
+          <div className="pt-2 mt-2 border-t flex items-center justify-between text-xs" style={{ borderColor: theme.glassBorder }}>
+            <span className="font-semibold animate-pulse" style={{ color: theme.accent }}>
+              {progressStage}
+            </span>
+            <div className="flex items-center gap-2">
+              <div className="w-36 h-2 rounded-full overflow-hidden border" style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder }}>
+                <div className="h-full transition-all duration-300" style={{ width: `${progressPercent}%`, background: theme.accentGradient }} />
+              </div>
+              <span className="font-mono text-[11px] font-bold">{progressPercent}%</span>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Main Two-Pane Split Layout */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 min-h-0 overflow-hidden">
-        {/* Left Tree Pane */}
+      {/* Main Content Workspace (Split or Full Width based on showInspector) */}
+      <div className="flex-1 px-4 py-2 min-h-0 flex gap-4 overflow-hidden">
+        {/* File Workspace (Left Pane - expands to 100% if showInspector is false!) */}
         <div 
-          className="lg:col-span-8 flex flex-col border-r overflow-y-auto"
-          style={{ backgroundColor: theme.tree_bg, borderColor: theme.border }}
+          className={`flex-1 flex flex-col rounded-3xl border glass-container shadow-xl overflow-hidden transition-all duration-300`}
+          style={{
+            backgroundColor: theme.glassCard,
+            borderColor: theme.glassBorder,
+          }}
         >
-          {/* Tree Header */}
+          {/* Workspace Title & Count Bar */}
           <div 
-            className="px-3 py-1.5 border-b text-[11px] font-semibold flex items-center justify-between sticky top-0 z-10"
-            style={{ backgroundColor: theme.card, borderColor: theme.border, color: theme.fg_muted }}
+            className="px-5 py-3 border-b flex items-center justify-between text-xs font-semibold"
+            style={{
+              backgroundColor: theme.glassPanel2,
+              borderColor: theme.glassBorder,
+              color: theme.fg,
+            }}
           >
             <div className="flex items-center gap-2">
-              <span>Destination Category / Item</span>
-              <span className="text-[10px] font-normal opacity-70">(click row to inspect evidence)</span>
+              <span className="font-bold text-sm tracking-tight">All Files</span>
+              <span 
+                className="text-[11px] font-mono px-2 py-0.5 rounded-full font-medium"
+                style={{ backgroundColor: theme.select, color: theme.accent }}
+              >
+                {items.length} items • {Object.keys(categories).length} folders
+              </span>
             </div>
-            <div className="flex items-center gap-6">
-              <span className="w-16 text-right">Items</span>
-              <span className="w-20 text-right">Size</span>
-              <span className="w-24 text-center">Confidence</span>
+
+            <div className="flex items-center gap-4 text-[11px] opacity-75 font-mono">
+              <span>{counts.selected} selected to move</span>
+              <span>•</span>
+              <span>{formatBytes(counts.totalSize)}</span>
             </div>
           </div>
 
-          {/* Tree content */}
-          <div className="p-2 space-y-1">
+          {/* Files List / Grid Container */}
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {Object.keys(filteredCategories).length === 0 ? (
-              <div className="py-16 text-center text-xs opacity-60" style={{ color: theme.fg_muted }}>
-                <FolderArchive className="w-10 h-10 mx-auto mb-2 opacity-40" />
-                <p>No files match current filter or preview hasn't been run.</p>
-                <p className="mt-1">Click "1. Preview" or load a sample folder above.</p>
+              <div className="py-24 text-center opacity-60">
+                <FolderOpen className="w-12 h-12 mx-auto mb-2 opacity-40" />
+                <p className="font-semibold text-sm">No files in current view</p>
+                <p className="text-xs mt-1">Click "1. Preview" or load a demo folder to test.</p>
               </div>
-            ) : (
+            ) : viewLayout === 'list' ? (
+              /* LIST VIEW: Matching gEFxN.jpg & x2cWA.jpg */
               Object.entries(filteredCategories).map(([cat, catItems]) => {
                 const isExpanded = expandedCategories[cat] !== false;
                 const catSize = catItems.reduce((acc, i) => acc + i.size, 0);
@@ -557,15 +696,25 @@ export const SortView: React.FC<SortViewProps> = ({
                 const someSelected = catItems.some(i => i.selected) && !allSelected;
 
                 return (
-                  <div key={cat} className="rounded border mb-1.5 overflow-hidden" style={{ borderColor: theme.border }}>
-                    {/* Category Folder Header Row */}
+                  <div 
+                    key={cat} 
+                    className="rounded-2xl border overflow-hidden transition-all shadow-xs"
+                    style={{
+                      backgroundColor: theme.glassPanel,
+                      borderColor: theme.glassBorder,
+                    }}
+                  >
+                    {/* Category Folder Row */}
                     <div
                       onClick={() => toggleCategoryExpand(cat)}
-                      className="px-2.5 py-1.5 flex items-center justify-between text-xs font-medium cursor-pointer hover:brightness-95 transition-all"
-                      style={{ backgroundColor: theme.panel2, color: theme.fg }}
+                      className="px-4 py-2.5 flex items-center justify-between cursor-pointer hover:brightness-105 transition-all"
+                      style={{
+                        backgroundColor: theme.glassPanel2,
+                        color: theme.fg,
+                      }}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        {/* Group Checkbox */}
+                      <div className="flex items-center gap-3 min-w-0">
+                        {/* Checkbox */}
                         <button
                           onClick={e => toggleCategorySelect(cat, e)}
                           className="hover:scale-110 transition-transform"
@@ -575,45 +724,44 @@ export const SortView: React.FC<SortViewProps> = ({
                           ) : someSelected ? (
                             <MinusSquare className="w-4 h-4" style={{ color: theme.warn }} />
                           ) : (
-                            <Square className="w-4 h-4 opacity-50" />
+                            <Square className="w-4 h-4 opacity-40" />
                           )}
                         </button>
 
-                        {/* Expand arrow */}
+                        {/* Chevron */}
                         {isExpanded ? (
-                          <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                          <ChevronDown className="w-4 h-4 opacity-60" />
                         ) : (
-                          <ChevronRight className="w-3.5 h-3.5 opacity-60" />
+                          <ChevronRight className="w-4 h-4 opacity-60" />
                         )}
 
-                        <Folder className="w-4 h-4 shrink-0" style={{ color: theme.accent }} />
-                        <span className="font-semibold truncate">{cat}</span>
-                      </div>
+                        {/* Folder icon */}
+                        <FileBadgeIcon name={cat} isDir={true} size="sm" />
 
-                      <div className="flex items-center gap-6 shrink-0 text-xs">
-                        <span className="w-16 text-right font-mono text-[11px] opacity-80">
-                          {catItems.length}
-                        </span>
-                        <span className="w-20 text-right font-mono text-[11px] opacity-80">
-                          {formatBytes(catSize)}
-                        </span>
-                        <div className="w-24 flex items-center justify-center gap-1">
-                          <span 
-                            className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold"
-                            style={{
-                              backgroundColor: cat.startsWith('Review') ? `${theme.review}22` : `${theme.ok}22`,
-                              color: cat.startsWith('Review') ? theme.review : theme.ok,
-                            }}
-                          >
-                            {cat.startsWith('Review') ? 'Review' : 'Sure'}
+                        <div className="min-w-0">
+                          <span className="font-bold text-xs truncate block">{cat}</span>
+                          <span className="text-[10px] opacity-60 font-mono">
+                            {catItems.length} items • {formatBytes(catSize)}
                           </span>
                         </div>
                       </div>
+
+                      <div className="flex items-center gap-2">
+                        <span 
+                          className="px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider"
+                          style={{
+                            backgroundColor: cat.startsWith('Review') ? `${theme.review}25` : `${theme.ok}25`,
+                            color: cat.startsWith('Review') ? theme.review : theme.ok,
+                          }}
+                        >
+                          {cat.startsWith('Review') ? 'Review' : 'Organized'}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Category Items list */}
+                    {/* Files inside category */}
                     {isExpanded && (
-                      <div className="divide-y" style={{ borderColor: theme.border }}>
+                      <div className="divide-y" style={{ borderColor: theme.glassBorder }}>
                         {catItems.map(item => {
                           const isCurrentActive = activeItem?.id === item.id;
                           const badgeColor = 
@@ -624,47 +772,89 @@ export const SortView: React.FC<SortViewProps> = ({
                           return (
                             <div
                               key={item.id}
-                              onClick={() => setSelectedItemId(item.id)}
-                              className={`px-3 py-1.5 pl-8 flex items-center justify-between text-xs cursor-pointer transition-all ${
-                                isCurrentActive ? 'font-semibold' : 'hover:opacity-90'
+                              onClick={() => {
+                                setSelectedItemId(item.id);
+                              }}
+                              onDoubleClick={() => handleOpenPreview(item)}
+                              title="Click to select, double-click to preview content and edit rules"
+                              className={`px-4 py-2.5 pl-9 flex items-center justify-between text-xs cursor-pointer transition-all duration-150 ${
+                                isCurrentActive ? 'font-medium' : 'hover:brightness-105'
                               }`}
                               style={{
                                 backgroundColor: isCurrentActive ? theme.select : 'transparent',
                                 color: theme.fg,
                               }}
                             >
-                              <div className="flex items-center gap-2.5 min-w-0 pr-2">
+                              <div className="flex items-center gap-3 min-w-0 pr-3">
                                 <button
                                   onClick={e => toggleItemSelect(item.id, e)}
                                   className="hover:scale-110 transition-transform"
                                 >
                                   {item.selected ? (
-                                    <CheckSquare className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                                    <CheckSquare className="w-4 h-4" style={{ color: theme.accent }} />
                                   ) : (
-                                    <Square className="w-3.5 h-3.5 opacity-40" />
+                                    <Square className="w-4 h-4 opacity-40" />
                                   )}
                                 </button>
-                                <FileText className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                                <span className="truncate text-xs font-mono">{item.name}</span>
+
+                                {/* Colorful File Type Badge */}
+                                <FileBadgeIcon name={item.name} category={item.category} size="md" />
+
+                                <div className="min-w-0">
+                                  <div className="font-semibold text-xs truncate font-mono">{item.name}</div>
+                                  <div className="text-[11px] opacity-60 truncate">
+                                    {item.verdict.label}
+                                  </div>
+                                </div>
                               </div>
 
-                              <div className="flex items-center gap-6 shrink-0">
-                                <span className="w-16" />
-                                <span className="w-20 text-right font-mono text-[11px] opacity-70">
+                              <div className="flex items-center gap-3 shrink-0 text-right">
+                                <div className="text-[11px] font-mono opacity-80">
                                   {formatBytes(item.size)}
-                                </span>
-                                <div className="w-24 text-center">
+                                </div>
+
+                                <div className="hidden sm:block text-[11px] opacity-60 w-24">
+                                  {new Date(item.mtime).toLocaleDateString()}
+                                </div>
+
+                                {/* Confidence Pill */}
+                                <div className="w-20 text-center">
                                   <span
-                                    className="px-2 py-0.5 rounded-full text-[10px] font-medium"
+                                    className="px-2.5 py-0.5 rounded-full text-[10px] font-bold"
                                     style={{
                                       backgroundColor: `${badgeColor}22`,
                                       color: badgeColor,
-                                      border: `1px solid ${badgeColor}44`,
+                                      border: `1px solid ${badgeColor}40`,
                                     }}
                                   >
                                     {item.verdict.level}
                                   </span>
                                 </div>
+
+                                {/* Interactive Preview Button */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleOpenPreview(item);
+                                  }}
+                                  title="Open full interactive preview"
+                                  className="p-1 rounded-full opacity-60 hover:opacity-100 hover:scale-110 transition-all cursor-pointer"
+                                >
+                                  <Eye className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                                </button>
+
+                                {/* Inspector Trigger button right on item */}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedItemId(item.id);
+                                    setShowInspector(true);
+                                  }}
+                                  title="Inspect classification details & evidence"
+                                  className="p-1 rounded-full opacity-60 hover:opacity-100 transition-opacity"
+                                >
+                                  <Info className="w-3.5 h-3.5" style={{ color: theme.accent }} />
+                                </button>
                               </div>
                             </div>
                           );
@@ -674,137 +864,279 @@ export const SortView: React.FC<SortViewProps> = ({
                   </div>
                 );
               })
+            ) : (
+              /* GRID / CARD VIEW */
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3.5">
+                {items
+                  .filter(it => {
+                    const q = filterText.trim().toLowerCase();
+                    if (filterMode === 'sure' && it.verdict.level !== 'Sure') return false;
+                    if (filterMode === 'unsure' && it.verdict.level === 'Sure') return false;
+                    if (filterMode === 'review' && it.verdict.dest[0] !== 'Review') return false;
+                    if (q && !it.name.toLowerCase().includes(q) && !it.verdict.label.toLowerCase().includes(q)) return false;
+                    return true;
+                  })
+                  .map(item => {
+                    const isCurrentActive = activeItem?.id === item.id;
+                    const badgeColor = 
+                      item.verdict.dest[0] === 'Review' ? theme.review :
+                      item.verdict.level === 'Sure' ? theme.ok :
+                      item.verdict.level === 'Probably' ? theme.warn : theme.unsure;
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => setSelectedItemId(item.id)}
+                        onDoubleClick={() => handleOpenPreview(item)}
+                        title="Click to select, double-click to preview content"
+                        className={`p-3.5 rounded-2xl border cursor-pointer transition-all hover:scale-101 flex flex-col justify-between ${
+                          isCurrentActive ? 'ring-2 shadow-md' : 'shadow-xs'
+                        }`}
+                        style={{
+                          backgroundColor: isCurrentActive ? theme.glassPanel2 : theme.glassPanel,
+                          borderColor: isCurrentActive ? theme.accent : theme.glassBorder,
+                          color: theme.fg,
+                        }}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <FileBadgeIcon name={item.name} category={item.category} size="lg" />
+                          <button
+                            onClick={e => toggleItemSelect(item.id, e)}
+                            className="hover:scale-110 transition-transform"
+                          >
+                            {item.selected ? (
+                              <CheckSquare className="w-4 h-4" style={{ color: theme.accent }} />
+                            ) : (
+                              <Square className="w-4 h-4 opacity-40" />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="min-w-0 my-1">
+                          <div className="font-bold text-xs truncate font-mono">{item.name}</div>
+                          <div className="text-[10px] opacity-60 truncate mt-0.5">{item.category}</div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t mt-2 text-[10px]" style={{ borderColor: theme.glassBorder }}>
+                          <span className="font-mono opacity-70">{formatBytes(item.size)}</span>
+                          <span
+                            className="px-2 py-0.5 rounded-full font-bold"
+                            style={{
+                              backgroundColor: `${badgeColor}22`,
+                              color: badgeColor,
+                            }}
+                          >
+                            {item.verdict.level}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
             )}
           </div>
         </div>
 
-        {/* Right Detail & Evidence Inspector Pane */}
-        <div 
-          className="lg:col-span-4 flex flex-col p-4 overflow-y-auto border-t lg:border-t-0"
-          style={{ backgroundColor: theme.detail_bg, color: theme.fg }}
-        >
-          <div className="border-b pb-2 mb-3 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider opacity-70 flex items-center gap-1.5">
-              <ShieldCheck className="w-4 h-4" style={{ color: theme.accent }} />
-              Classification Evidence
-            </span>
-            {activeItem && (
-              <span 
-                className="text-[11px] font-mono px-2 py-0.5 rounded font-bold"
-                style={{
-                  backgroundColor: 
-                    activeItem.verdict.dest[0] === 'Review' ? `${theme.review}22` :
-                    activeItem.verdict.level === 'Sure' ? `${theme.ok}22` : `${theme.unsure}22`,
-                  color: 
-                    activeItem.verdict.dest[0] === 'Review' ? theme.review :
-                    activeItem.verdict.level === 'Sure' ? theme.ok : theme.unsure,
-                }}
+        {/* Detachable / Collapsible Side Info Inspector (Requested by User!) */}
+        {showInspector && (
+          <div 
+            className="w-80 lg:w-96 rounded-3xl border glass-container shadow-2xl flex flex-col p-4 overflow-y-auto animate-in slide-in-from-right-3 duration-200 shrink-0"
+            style={{
+              backgroundColor: theme.glassCard,
+              borderColor: theme.glassBorder,
+              color: theme.fg,
+            }}
+          >
+            {/* Inspector Header with Close/Hide Swipe Button */}
+            <div className="border-b pb-2.5 mb-3 flex items-center justify-between" style={{ borderColor: theme.glassBorder }}>
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4" style={{ color: theme.accent }} />
+                <span className="text-xs font-extrabold uppercase tracking-wider">
+                  Classification Inspector
+                </span>
+              </div>
+              <button
+                onClick={() => setShowInspector(false)}
+                title="Hide Inspector (swipe away)"
+                className="p-1 rounded-full opacity-60 hover:opacity-100 transition-opacity"
               >
-                {Math.round(activeItem.verdict.confidence * 100)}% Confidence
-              </span>
-            )}
-          </div>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-          {activeItem ? (
-            <div className="space-y-4 text-xs">
-              {/* File details */}
-              <div>
-                <label className="text-[10px] uppercase font-bold opacity-60">Source File</label>
-                <div className="p-2 rounded font-mono text-xs break-all mt-1 border" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
-                  {activeItem.source}
+            {activeItem ? (
+              <div className="space-y-4 text-xs">
+                {/* File preview badge & name */}
+                <div className="p-3 rounded-2xl border flex items-center justify-between gap-3" style={{ backgroundColor: theme.glassPanel, borderColor: theme.glassBorder }}>
+                  <div className="flex items-center gap-3 min-w-0">
+                    <FileBadgeIcon name={activeItem.name} category={activeItem.category} size="lg" />
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs truncate font-mono">{activeItem.name}</div>
+                      <div className="text-[11px] font-mono opacity-60">{formatBytes(activeItem.size)}</div>
+                    </div>
+                  </div>
                 </div>
-              </div>
 
-              {/* Destination Path */}
-              <div>
-                <label className="text-[10px] uppercase font-bold opacity-60">Organized Destination</label>
-                <div className="p-2 rounded font-mono text-xs break-all mt-1 border font-semibold flex items-center gap-1.5" style={{ backgroundColor: theme.card, borderColor: theme.border, color: theme.accent }}>
-                  <FolderOpen className="w-4 h-4 shrink-0" />
-                  <span>
-                    {(destPath || scopePath || 'Downloads')}/{activeItem.verdict.path}/{activeItem.name}
-                  </span>
-                </div>
-              </div>
+                {/* Inspect Content & Change Rules Action Button */}
+                <button
+                  onClick={() => handleOpenPreview(activeItem)}
+                  className="w-full py-2 px-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all hover:scale-101 active:scale-98 cursor-pointer"
+                  style={{
+                    background: theme.accentGradient,
+                    color: theme.accent_fg,
+                    boxShadow: theme.accentGlow,
+                  }}
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>Inspect Content &amp; Edit Category</span>
+                </button>
 
-              {/* Human Verdict Label */}
-              <div>
-                <label className="text-[10px] uppercase font-bold opacity-60">Identified Type</label>
-                <div className="p-2.5 rounded font-medium mt-1 border text-sm" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
-                  {activeItem.verdict.label}
+                {/* Source File */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Source Location</label>
+                    <button
+                      onClick={() => handleCopySource(activeItem.source)}
+                      className="text-[10px] flex items-center gap-1 opacity-70 hover:opacity-100 cursor-pointer"
+                      style={{ color: theme.accent }}
+                    >
+                      {copiedSource ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedSource ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
+                  <div className="p-2.5 rounded-xl font-mono text-[11px] break-all mt-1 border" style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder }}>
+                    {activeItem.source}
+                  </div>
                 </div>
-              </div>
 
-              {/* Confidence Meter */}
-              <div>
-                <div className="flex justify-between text-[11px] mb-1">
-                  <span className="font-medium">Confidence Level</span>
-                  <span className="font-mono font-bold">{activeItem.verdict.level} ({Math.round(activeItem.verdict.confidence * 100)}%)</span>
-                </div>
-                <div className="w-full h-2 rounded-full overflow-hidden border" style={{ backgroundColor: theme.entry_bg, borderColor: theme.border }}>
+                {/* Destination Path */}
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase font-bold opacity-60">Organized Target Destination</label>
+                    <button
+                      onClick={() => handleCopyDest(`${(destPath || scopePath || 'Downloads')}/${activeItem.verdict.path}/${activeItem.name}`)}
+                      className="text-[10px] flex items-center gap-1 opacity-70 hover:opacity-100 cursor-pointer"
+                      style={{ color: theme.accent }}
+                    >
+                      {copiedDest ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />}
+                      <span>{copiedDest ? 'Copied' : 'Copy'}</span>
+                    </button>
+                  </div>
                   <div 
-                    className="h-full transition-all"
+                    className="p-2.5 rounded-xl font-mono text-[11px] break-all mt-1 border font-bold flex items-center gap-2"
                     style={{
-                      width: `${activeItem.verdict.confidence * 100}%`,
-                      backgroundColor: 
-                        activeItem.verdict.dest[0] === 'Review' ? theme.review :
-                        activeItem.verdict.level === 'Sure' ? theme.ok :
-                        activeItem.verdict.level === 'Probably' ? theme.warn : theme.unsure,
+                      backgroundColor: theme.entry_bg,
+                      borderColor: theme.glassBorder,
+                      color: theme.accent,
                     }}
-                  />
+                  >
+                    <FolderOpen className="w-4 h-4 shrink-0" />
+                    <span>
+                      {(destPath || scopePath || 'Downloads')}/{activeItem.verdict.path}/{activeItem.name}
+                    </span>
+                  </div>
                 </div>
-              </div>
 
-              {/* Evidence Chain */}
-              <div>
-                <label className="text-[10px] uppercase font-bold opacity-60 mb-1.5 block">
-                  Why this file was classified here:
-                </label>
-                <div className="p-3 rounded border space-y-2" style={{ backgroundColor: theme.card, borderColor: theme.border }}>
-                  {activeItem.verdict.evidence.length === 0 ? (
-                    <p className="opacity-60 italic text-xs">No explicit evidence string recorded.</p>
-                  ) : (
-                    activeItem.verdict.evidence.map((ev, i) => (
+                {/* Identified Type Label */}
+                <div>
+                  <label className="text-[10px] uppercase font-bold opacity-60">Identified Real Type</label>
+                  <div className="p-2.5 rounded-xl font-medium mt-1 border text-xs" style={{ backgroundColor: theme.glassPanel, borderColor: theme.glassBorder }}>
+                    {activeItem.verdict.label}
+                  </div>
+                </div>
+
+                {/* Confidence Level & Meter */}
+                <div>
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="font-semibold">Confidence</span>
+                    <span className="font-mono font-bold">{activeItem.verdict.level} ({Math.round(activeItem.verdict.confidence * 100)}%)</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full overflow-hidden border" style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder }}>
+                    <div 
+                      className="h-full transition-all duration-300"
+                      style={{
+                        width: `${activeItem.verdict.confidence * 100}%`,
+                        background: activeItem.verdict.level === 'Sure' ? theme.ok : theme.warn,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Evidence Chain */}
+                <div>
+                  <label className="text-[10px] uppercase font-bold opacity-60 mb-1.5 block">
+                    Proof &amp; Classification Evidence:
+                  </label>
+                  <div className="p-3 rounded-xl border space-y-2" style={{ backgroundColor: theme.glassPanel, borderColor: theme.glassBorder }}>
+                    {activeItem.verdict.evidence.map((ev, i) => (
                       <div key={i} className="flex items-start gap-2">
                         <span className="text-base leading-none" style={{ color: theme.accent }}>•</span>
-                        <span className="leading-snug">{ev}</span>
+                        <span className="leading-snug text-[11px]">{ev}</span>
                       </div>
-                    ))
-                  )}
+                    ))}
+                  </div>
                 </div>
-              </div>
 
-              {/* File Meta */}
-              <div className="pt-2 border-t grid grid-cols-2 gap-2 text-[11px]" style={{ borderColor: theme.border }}>
-                <div>
-                  <span className="opacity-60">File Size:</span>{' '}
-                  <span className="font-mono font-medium">{formatBytes(activeItem.size)}</span>
-                </div>
-                <div>
-                  <span className="opacity-60">Modified:</span>{' '}
-                  <span className="font-mono font-medium">
-                    {new Date(activeItem.mtime).toLocaleDateString()}
-                  </span>
+                {/* Metadata */}
+                <div className="pt-2 border-t grid grid-cols-2 gap-2 text-[11px]" style={{ borderColor: theme.glassBorder }}>
+                  <div>
+                    <span className="opacity-60">Last Modified:</span>
+                    <div className="font-mono font-medium">{new Date(activeItem.mtime).toLocaleDateString()}</div>
+                  </div>
+                  <div>
+                    <span className="opacity-60">Category Domain:</span>
+                    <div className="font-mono font-medium truncate">{activeItem.category.split('/')[0]}</div>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : (
-            <div className="py-20 text-center opacity-50 text-xs">
-              Select any file in the tree to inspect why FileSorter classified it.
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="py-20 text-center opacity-60 text-xs">
+                Select any file to inspect why it was categorized.
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Bottom Status bar */}
-      <footer 
-        className="border-t px-4 py-2 flex items-center justify-between text-xs"
-        style={{ backgroundColor: theme.panel, borderColor: theme.border, color: theme.fg_muted }}
+      {/* Bottom Storage & Status Widget (Matching screenshot #1 & #2!) */}
+      <div 
+        className="mx-4 mb-2 p-2.5 rounded-2xl border glass-container flex flex-wrap items-center justify-between text-xs gap-4 shadow-sm"
+        style={{
+          backgroundColor: theme.glassPanel,
+          borderColor: theme.glassBorder,
+          color: theme.fg_muted,
+        }}
       >
-        <div className="flex items-center gap-4">
-          <span>
-            <strong style={{ color: theme.fg }}>{items.length}</strong> items total
-          </span>
-          <span>•</span>
+        {/* Storage Bar Indicator */}
+        <div className="flex items-center gap-3">
+          <div 
+            className="p-1.5 rounded-xl flex items-center justify-center shadow-xs"
+            style={{ backgroundColor: theme.card, color: theme.accent }}
+          >
+            <HardDrive className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-xs" style={{ color: theme.fg }}>Storage Organized</span>
+              <span className="font-mono text-[11px]">
+                {formatBytes(counts.totalSize)} of {items.length} files
+              </span>
+            </div>
+            {/* Soft gradient storage bar */}
+            <div className="w-44 h-1.5 rounded-full overflow-hidden mt-1 border" style={{ backgroundColor: theme.entry_bg, borderColor: theme.glassBorder }}>
+              <div 
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${Math.min(100, Math.max(15, (counts.selected / Math.max(1, items.length)) * 100))}%`,
+                  background: theme.accentGradient,
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Status badges */}
+        <div className="flex items-center gap-3 text-[11px]">
           <span>
             <strong style={{ color: theme.ok }}>{counts.sure}</strong> Sure
           </span>
@@ -821,13 +1153,37 @@ export const SortView: React.FC<SortViewProps> = ({
             <strong style={{ color: theme.review }}>{counts.review}</strong> Review
           </span>
         </div>
+      </div>
 
-        <div className="flex items-center gap-3">
-          <span>Total Size: <strong style={{ color: theme.fg }}>{formatBytes(counts.totalSize)}</strong></span>
-          <span>•</span>
-          <span>Sort or Search — nothing moves until you confirm.</span>
-        </div>
-      </footer>
+      {/* Floating Re-open Side Details Button when hidden (Swipe & Toggle requested by user) */}
+      {!showInspector && (
+        <button
+          onClick={() => setShowInspector(true)}
+          title="Open classification inspector & evidence"
+          className="fixed right-0 top-1/2 -translate-y-1/2 z-30 px-2 py-3.5 rounded-l-2xl border-l border-y shadow-2xl flex flex-col items-center gap-1.5 transition-all hover:pl-3 group cursor-pointer backdrop-blur-md"
+          style={{
+            backgroundColor: theme.glassCard,
+            borderColor: theme.glassBorder,
+            color: theme.accent,
+            boxShadow: theme.accentGlow,
+          }}
+        >
+          <PanelRightOpen className="w-4 h-4 transition-transform group-hover:scale-115" />
+          <span className="text-[10px] font-bold tracking-widest uppercase [writing-mode:vertical-rl] rotate-180 opacity-80 group-hover:opacity-100">
+            Details
+          </span>
+        </button>
+      )}
+
+      {/* Full Interactive File Preview, Hex, & Rule Editor Modal */}
+      <FilePreviewModal
+        isOpen={isPreviewModalOpen}
+        onClose={() => setIsPreviewModalOpen(false)}
+        item={previewItem || activeItem}
+        theme={theme}
+        onUpdateCategory={handleUpdateCategory}
+        onAddRuleFromItem={onAddRuleFromItem || ((_p, _t, _d) => {})}
+      />
     </div>
   );
 };

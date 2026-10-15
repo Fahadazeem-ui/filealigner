@@ -1,102 +1,84 @@
-"""Content-aware file search — uses same Engine as sort, scoped roots."""
 from __future__ import annotations
-
 import os
-from dataclasses import dataclass
+import re
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable, Iterator
 
-CATEGORY_MAP = {
-    "image": ("Images", "Pictures", "Photos"),
-    "video": ("Videos", "Movies"),
-    "audio": ("Audio", "Music"),
-    "document": ("Documents", "Docs", "Office"),
-    "archive": ("Archives", "Compressed"),
-}
+# Content-aware search with real type detection + evidence + confidence
 
+def _safe_stat(path: Path) -> dict[str, Any]:
+    try:
+        st = path.stat()
+        return {"size": st.st_size, "mtime": st.st_mtime}
+    except Exception:
+        return {"size": 0, "mtime": 0}
 
-@dataclass
-class Hit:
-    name: str
-    path: str
-    kind: str = ""
-    size: int = 0
-
-
-def category_prefix(kind: str) -> tuple[str, ...]:
-    k = (kind or "").lower()
-    for key, prefixes in CATEGORY_MAP.items():
-        if key in k or k in key:
-            return prefixes
-    return ()
-
-
-def _user_search_roots() -> list[Path]:
-    roots = []
-    home = Path.home()
-    roots.append(home)
-    for name in ("Desktop", "Downloads", "Documents", "Pictures", "Videos", "Music"):
-        p = home / name
-        if p.is_dir():
-            roots.append(p)
-    # Windows drives
-    if os.name == "nt":
-        import string
-        for letter in string.ascii_uppercase:
-            drive = Path(f"{letter}:/")
-            if drive.exists():
-                roots.append(drive)
-    return roots
-
-
-def search(
+def search_files(
+    root: str | Path,
     query: str = "",
-    root: str | Path | None = None,
-    type_filter: Iterable[str] | None = None,
-    limit: int = 8000,
-    whole_pc: bool = True,
-) -> list[Hit]:
-    q = (query or "").strip().lower()
-    types = {t.lower() for t in (type_filter or []) if t}
-    hits: list[Hit] = []
-    if root:
-        roots = [Path(root)]
-    elif whole_pc:
-        roots = _user_search_roots()
-    else:
-        roots = [Path.home()]
-
-    skip_dirs = {".git", "node_modules", "__pycache__", "Windows", "$Recycle.Bin", "System Volume Information"}
-
-    for base in roots:
+    *,
+    recursive: bool = True,
+    case_sensitive: bool = False,
+    content_aware: bool = True,
+    min_confidence: float = 0.0,
+    type_filter: str | None = None,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    extensions: list[str] | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> list[dict[str, Any]]:
+    root = Path(root)
+    if not root.is_dir():
+        return []
+    q = query.strip()
+    flags = 0 if case_sensitive else re.IGNORECASE
+    pattern = re.compile(re.escape(q), flags) if q else None
+    results: list[dict[str, Any]] = []
+    walk = root.rglob("*") if recursive else root.iterdir()
+    for p in walk:
         try:
-            for dirpath, dirnames, filenames in os.walk(base):
-                dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
-                for fn in filenames:
-                    if q and q not in fn.lower():
-                        continue
-                    full = Path(dirpath) / fn
-                    kind = ""
-                    ext = full.suffix.lower()
-                    if ext in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic"}:
-                        kind = "image"
-                    elif ext in {".mp4", ".mkv", ".avi", ".mov", ".webm"}:
-                        kind = "video"
-                    elif ext in {".mp3", ".wav", ".flac", ".aac", ".m4a"}:
-                        kind = "audio"
-                    elif ext in {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt"}:
-                        kind = "document"
-                    elif ext in {".zip", ".rar", ".7z", ".tar", ".gz"}:
-                        kind = "archive"
-                    if types and kind not in types and not any(t in kind for t in types):
-                        continue
-                    try:
-                        size = full.stat().st_size
-                    except OSError:
-                        size = 0
-                    hits.append(Hit(name=fn, path=str(full), kind=kind, size=size))
-                    if len(hits) >= limit:
-                        return hits
+            if not p.is_file():
+                continue
+            if progress:
+                progress(str(p))
+            st = _safe_stat(p)
+            if min_size is not None and st["size"] < min_size:
+                continue
+            if max_size is not None and st["size"] > max_size:
+                continue
+            if extensions:
+                ext = p.suffix.lower().lstrip(".")
+                if ext not in {e.lower().lstrip(".") for e in extensions}:
+                    continue
+            name_match = bool(pattern.search(p.name)) if pattern else True
+            conf = 0.5 if name_match else 0.0
+            evidence = []
+            if name_match and q:
+                evidence.append(f"name contains '{q}'")
+                conf = 0.75
+            # content-aware type hint (lightweight)
+            if content_aware:
+                try:
+                    from fsengine.classify import classify_path
+                    v = classify_path(p)
+                    if v and getattr(v, "folder", None):
+                        evidence.append(f"type={v.folder}")
+                        conf = max(conf, float(getattr(v, "confidence", 0.5) or 0.5))
+                        if type_filter and type_filter.lower() not in str(v.folder).lower():
+                            continue
+                except Exception:
+                    pass
+            if conf < min_confidence:
+                continue
+            results.append({
+                "path": str(p),
+                "name": p.name,
+                "size": st["size"],
+                "mtime": st["mtime"],
+                "confidence": round(conf, 3),
+                "evidence": evidence,
+            })
         except Exception:
             continue
-    return hits
+    results.sort(key=lambda r: (-r["confidence"], r["name"].lower()))
+    return results
