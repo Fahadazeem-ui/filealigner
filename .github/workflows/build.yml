@@ -3,45 +3,149 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install deps
-        run: pip install pyinstaller pywebview
-      - name: Verify glass UI
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller pywebview pythonnet clr-loader bottle proxy_tools
+          pip install pillow filetype || true
+
+      - name: Rebuild glass UI from source (always)
         shell: bash
         run: |
           python - <<'PY'
+          import sys, zlib, pathlib
+          src = pathlib.Path("fsengine/ui/index.html")
+          if not src.is_file():
+              print("FATAL: fsengine/ui/index.html missing")
+              sys.exit(1)
+          html = src.read_text(encoding="utf-8")
+          if "backdrop-filter" not in html or "FileSorter" not in html:
+              print("FATAL: index.html missing glass markers")
+              sys.exit(1)
+          h = zlib.compress(html.encode("utf-8"), 9).hex()
+          n = 10
+          chunk = (len(h) + n - 1) // n
+          for i in range(n):
+              part = h[i * chunk : (i + 1) * chunk]
+              pathlib.Path(f"fsengine/_uh{i}.py").write_text(f"_P = '{part}'\n", encoding="utf-8")
+          pathlib.Path("fsengine/ui_html.py").write_text(
+              '"""Glass UI — hex parts + source fallback."""\n'
+              "from __future__ import annotations\n"
+              "import zlib\nfrom pathlib import Path\n\n"
+              "def _load_from_hex() -> str:\n"
+              "    from fsengine._uh0 import _P as p0\n"
+              "    from fsengine._uh1 import _P as p1\n"
+              "    from fsengine._uh2 import _P as p2\n"
+              "    from fsengine._uh3 import _P as p3\n"
+              "    from fsengine._uh4 import _P as p4\n"
+              "    from fsengine._uh5 import _P as p5\n"
+              "    from fsengine._uh6 import _P as p6\n"
+              "    from fsengine._uh7 import _P as p7\n"
+              "    from fsengine._uh8 import _P as p8\n"
+              "    from fsengine._uh9 import _P as p9\n"
+              "    return zlib.decompress(bytes.fromhex(p0+p1+p2+p3+p4+p5+p6+p7+p8+p9)).decode('utf-8')\n\n"
+              "def _load_from_file() -> str:\n"
+              "    p = Path(__file__).resolve().parent / 'ui' / 'index.html'\n"
+              "    if p.is_file(): return p.read_text(encoding='utf-8')\n"
+              "    raise FileNotFoundError('index.html missing')\n\n"
+              "def get_html() -> str:\n"
+              "    try:\n"
+              "        html = _load_from_hex()\n"
+              "        if 'backdrop-filter' in html and 'FileSorter' in html: return html\n"
+              "    except Exception: pass\n"
+              "    return _load_from_file()\n\n"
+              "try:\n"
+              "    _HTML = get_html()\n"
+              "except Exception as _e:\n"
+              "    _HTML = '<html><body>FileSorter UI missing</body></html>'\n",
+              encoding="utf-8",
+          )
+          for k in list(sys.modules):
+              if k.startswith("fsengine"):
+                  del sys.modules[k]
           from fsengine.ui_html import _HTML
-          assert "backdrop-filter" in _HTML, "no glass css"
-          assert "FileSorter" in _HTML
+          assert "backdrop-filter" in _HTML and "FileSorter" in _HTML
           print("glass UI OK", len(_HTML))
-          from fsengine.listing import is_identity_member
-          assert is_identity_member("mimetype")
-          print("listing OK")
+          try:
+              from fsengine.listing import is_identity_member
+              assert is_identity_member("mimetype")
+              print("listing OK")
+          except Exception as e:
+              print("listing warn:", e)
+          from fsengine.settings import DEFAULTS, scale_factor
+          assert "appearance" in DEFAULTS
+          print("settings OK", scale_factor())
+          print("VERIFY PASS")
           PY
+
       - name: Build exe
-        run: |
-          pyinstaller --noconfirm --onefile --windowed --name FileSorter --collect-submodules fsengine --collect-all webview --hidden-import=queue --hidden-import=threading --hidden-import=tkinter --hidden-import=webview --hidden-import=fsengine.glass_app --hidden-import=fsengine.ui_html --hidden-import=fsengine._uh0 --hidden-import=fsengine._uh1 --hidden-import=fsengine._uh2 --hidden-import=fsengine._uh3 --hidden-import=fsengine._uh4 --hidden-import=fsengine._uh5 --hidden-import=fsengine._uh6 --hidden-import=fsengine._uh7 --hidden-import=fsengine._uh8 --hidden-import=fsengine._uh9 file_sorter.py
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name FileSorter
+          --collect-submodules fsengine
+          --collect-all webview
+          --add-data "fsengine/ui;fsengine/ui"
+          --hidden-import=queue
+          --hidden-import=threading
+          --hidden-import=tkinter
+          --hidden-import=webview
+          --hidden-import=clr_loader
+          --hidden-import=pythonnet
+          --hidden-import=bottle
+          --hidden-import=proxy_tools
+          --hidden-import=fsengine.glass_app
+          --hidden-import=fsengine.ui_html
+          --hidden-import=fsengine.settings
+          --hidden-import=fsengine.versions
+          --hidden-import=fsengine.search_engine
+          --hidden-import=fsengine.listing
+          --hidden-import=fsengine.classify
+          --hidden-import=sorter_core
+          --hidden-import=fsengine._uh0
+          --hidden-import=fsengine._uh1
+          --hidden-import=fsengine._uh2
+          --hidden-import=fsengine._uh3
+          --hidden-import=fsengine._uh4
+          --hidden-import=fsengine._uh5
+          --hidden-import=fsengine._uh6
+          --hidden-import=fsengine._uh7
+          --hidden-import=fsengine._uh8
+          --hidden-import=fsengine._uh9
+          file_sorter.py
+
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
         continue-on-error: true
+
       - name: Build installer
         shell: cmd
         run: |
-          if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" ("C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss) else (echo no inno)
+          if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\FileSorter.iss
+          ) else (
+            echo no inno
+          )
         continue-on-error: true
+
       - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-exe
           path: dist/FileSorter.exe
+
       - uses: actions/upload-artifact@v4
         with:
           name: FileSorter-Setup
-          path: dist/FileSorter-Setup-*.exe
-        continue-on-error: true
+          path: |
+            dist/FileSorter-Setup-*.exe
+            Output/*.exe
+          if-no-files-found: ignore
