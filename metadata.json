@@ -1,0 +1,8 @@
+{
+  "name": "FileSorter 5.0 – Content-Aware File Organizer & Search",
+  "description": "Content-aware file classification, smart sorting, deep search, and duplicate cleanup with soft Aurora glass themes.",
+  "version": "5.0.0",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
