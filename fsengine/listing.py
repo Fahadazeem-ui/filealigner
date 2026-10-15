@@ -1,12 +1,15 @@
-"""Listing helpers — identity files for containers."""
+"""One interface over zip / tar / plain folders for identity-aware classification."""
 from __future__ import annotations
 from pathlib import Path
 
 def is_identity_member(name: str) -> bool:
     n = (name or "").replace("\\", "/").lower().lstrip("./")
     base = n.split("/")[-1]
-    keys = {"mimetype", "androidmanifest.xml", "classes.dex", "[content_types].xml",
-            "meta-inf/manifest.mf", "package.json", "pom.xml", "build.gradle"}
+    keys = {
+        "mimetype", "androidmanifest.xml", "classes.dex", "[content_types].xml",
+        "meta-inf/manifest.mf", "package.json", "pom.xml", "build.gradle",
+        "word/document.xml", "xl/workbook.xml", "resources.arsc",
+    }
     if base in keys or n in keys:
         return True
     for k in keys:
@@ -15,7 +18,6 @@ def is_identity_member(name: str) -> bool:
     return False
 
 def list_members(path):
-    """Yield member names from a zip/tar/folder without full extract."""
     p = Path(path)
     try:
         if p.is_dir():
